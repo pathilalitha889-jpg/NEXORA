@@ -1,4 +1,6 @@
+
 import os
+import json
 import streamlit as st
 
 os.environ["NEXORA_UI"] = "1"
@@ -9,11 +11,15 @@ try:
 
     if "EMAIL_APP_PASSWORD" in st.secrets:
         os.environ["EMAIL_APP_PASSWORD"] = st.secrets["EMAIL_APP_PASSWORD"]
+
+    if "GOOGLE_TOKEN_JSON" in st.secrets:
+        with open("token.json", "w", encoding="utf-8") as f:
+            f.write(st.secrets["GOOGLE_TOKEN_JSON"])
+
 except Exception:
     pass
 
 import agent
-
 st.set_page_config(
     page_title="NEXORA",
     page_icon="🤖",
