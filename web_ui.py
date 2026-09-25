@@ -1,8 +1,18 @@
 import os
 import streamlit as st
-import agent
 
 os.environ["NEXORA_UI"] = "1"
+
+try:
+    if "EMAIL_ADDRESS" in st.secrets:
+        os.environ["EMAIL_ADDRESS"] = st.secrets["EMAIL_ADDRESS"]
+
+    if "EMAIL_APP_PASSWORD" in st.secrets:
+        os.environ["EMAIL_APP_PASSWORD"] = st.secrets["EMAIL_APP_PASSWORD"]
+except Exception:
+    pass
+
+import agent
 
 st.set_page_config(
     page_title="NEXORA",
