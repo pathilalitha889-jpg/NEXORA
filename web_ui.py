@@ -15,11 +15,15 @@ try:
     if "GOOGLE_TOKEN_JSON" in st.secrets:
         with open("token.json", "w", encoding="utf-8") as f:
             f.write(st.secrets["GOOGLE_TOKEN_JSON"])
+    if "GOOGLE_CREDENTIALS_JSON" in st.secrets:
+        with open("credentials.json", "w", encoding="utf-8") as f:
+           f.write(st.secrets["GOOGLE_CREDENTIALS_JSON"])
 
 except Exception:
     pass
 
 import agent
+
 st.set_page_config(
     page_title="NEXORA",
     page_icon="🤖",
