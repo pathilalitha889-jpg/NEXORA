@@ -16,8 +16,10 @@ from langgraph.graph import StateGraph, START, END
 
 load_dotenv()
 
-client = OpenAI()
-
+try:
+    client = OpenAI()
+except Exception:
+    client = None
 
 # =========================================================
 # STATE
