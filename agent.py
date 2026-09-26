@@ -114,40 +114,36 @@ def ask_permission(action: str, state: AgentState) -> bool:
 # =========================================================
 # ANALYZE REQUEST
 # =========================================================
+def analyze_request(state):
 
-def analyze_request(state: AgentState):
-
-    command = state.get("command", "").strip()
+    command = state.get(
+        "command",
+        ""
+    ).strip()
 
     if not command:
+
         return {
             "action": "OTHER",
             "result": "Please enter a command."
         }
 
-    # Local fallback when OpenAI is unavailable
-    if not use_ai():
+    print("\nAnalyzing request...")
 
-        action = local_classify(command)
+    prompt = f"""
+You are NEXORA's intelligent intent router.
 
-        print("Local classification:", action)
+Your job is to understand the USER'S MEANING and select the correct tool.
 
-        return {
-            "action": action
-        }
+IMPORTANT:
+- Do NOT depend on exact keywords.
+- Understand natural language, paraphrasing, slang, short sentences,
+  polite requests, indirect requests, and different sentence structures.
+- The same intent can be expressed in many different ways.
+- Focus on what the user wants NEXORA to DO.
+- Do not return OTHER when the request clearly matches one of the supported tools.
 
-    try:
-
-        response = client.responses.create(
-
-            model="gpt-5.6-luna",
-
-            input=f"""
-You are the AI brain of NEXORA.
-
-Understand the user's request and classify it into exactly ONE action.
-
-Possible actions:
+Choose exactly ONE:
 
 MEETING
 ADD_TASK
@@ -158,25 +154,125 @@ MEMORY
 RAG
 OTHER
 
-Rules:
+INTENT DEFINITIONS:
 
-Schedule/create/book a meeting -> MEETING
-Add/create a task -> ADD_TASK
-Show/list tasks -> SHOW_TASK
-Show/list meetings -> SHOW_MEETING
-Send/write an email -> SEND_EMAIL
-Remember/store/recall information -> MEMORY
-Questions about an uploaded document -> RAG
-Anything else -> OTHER
+MEETING:
+The user wants to schedule, arrange, book, set, create,
+plan, or organize a meeting or appointment.
 
-User request:
+ADD_TASK:
+The user wants to add something to their task list,
+create a task, remember something as a task,
+track something they need to do, or asks NEXORA to keep
+something as a future task.
+
+SHOW_MEETING:
+The user wants to see, list, check, or know their meetings.
+
+SHOW_TASK:
+The user wants to see, list, check, or know their tasks.
+
+SEND_EMAIL:
+The user wants NEXORA to send, compose, write, or deliver
+an email/message through Gmail.
+
+MEMORY:
+The user wants NEXORA to remember/save/store personal information,
+OR the user is asking what NEXORA remembers about them.
+
+RAG:
+The user is asking a question that should be answered using
+the uploaded PDF/document.
+
+OTHER:
+Only use this when the request does not match any supported tool.
+
+EXAMPLES:
+
+"I have to study Java tomorrow"
+-> ADD_TASK
+
+"Make sure I prepare Java tomorrow"
+-> ADD_TASK
+
+"I need to finish my assignment"
+-> ADD_TASK
+
+"Could you put this on my task list?"
+-> ADD_TASK
+
+"What do I need to do?"
+-> SHOW_TASK
+
+"What have I saved as tasks?"
+-> SHOW_TASK
+
+"I have a meeting with Ravi tomorrow at 10"
+-> MEETING
+
+"Can you arrange a meeting with Ravi for tomorrow?"
+-> MEETING
+
+"Put Ravi on my calendar for 10 AM tomorrow"
+-> MEETING
+
+"What meetings do I have?"
+-> SHOW_MEETING
+
+"Do I have anything scheduled?"
+-> SHOW_MEETING
+
+"Tell Ravi that I will be late"
+-> SEND_EMAIL
+
+"Please send Ravi an email saying I am late"
+-> SEND_EMAIL
+
+"Can you mail this person?"
+-> SEND_EMAIL
+
+"Keep in mind that I am learning Java"
+-> MEMORY
+
+"Please remember my interview is Monday"
+-> MEMORY
+
+"What do you remember about me?"
+-> MEMORY
+
+"Do you know what I am learning?"
+-> MEMORY
+
+"What did I ask you to remember?"
+-> MEMORY
+
+"What does the uploaded document say about JDBC?"
+-> RAG
+
+"Explain batch updates from the PDF"
+-> RAG
+
+"Can you answer this from my document?"
+-> RAG
+
+USER REQUEST:
 {command}
 
 Return ONLY the action name.
 """
+
+    try:
+
+        response = client.responses.create(
+            model="gpt-5.6-luna",
+            input=prompt
         )
 
-        action = response.output_text.strip().upper()
+        action = (
+            response.output_text
+            .strip()
+            .upper()
+        )
 
         valid_actions = {
             "MEETING",
@@ -190,9 +286,46 @@ Return ONLY the action name.
         }
 
         if action not in valid_actions:
-            action = local_classify(command)
 
-        print("AI selected:", action)
+            # Retry once with a stricter classification request
+            retry = client.responses.create(
+                model="gpt-5.6-luna",
+                input=f"""
+Classify this user request by INTENT.
+
+Possible actions:
+MEETING
+ADD_TASK
+SHOW_MEETING
+SHOW_TASK
+SEND_EMAIL
+MEMORY
+RAG
+OTHER
+
+Understand the meaning, not exact words.
+
+USER REQUEST:
+{command}
+
+Return ONLY one action name.
+"""
+            )
+
+            action = (
+                retry.output_text
+                .strip()
+                .upper()
+            )
+
+        if action not in valid_actions:
+
+            action = "OTHER"
+
+        print(
+            "NEXORA understood:",
+            action
+        )
 
         return {
             "action": action
@@ -200,16 +333,15 @@ Return ONLY the action name.
 
     except Exception as e:
 
-        print("AI analysis failed:", e)
-
-        action = local_classify(command)
-
-        print("Local fallback:", action)
+        print(
+            "AI classification error:",
+            e
+        )
 
         return {
-            "action": action
+            "action": "OTHER",
+            "result": "Unable to understand the request."
         }
-
 
 # =========================================================
 # MEETING NODE
