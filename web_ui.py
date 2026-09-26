@@ -23,6 +23,33 @@ except Exception:
     pass
 
 import agent
+# -------------------------------------------------
+# GOOGLE LOGIN
+# -------------------------------------------------
+
+if not st.user.is_logged_in:
+
+    st.markdown("## 🔐 Welcome to NEXORA")
+    st.write("Please sign in with your Google account to continue.")
+
+    if st.button(
+        "🔵 Continue with Google",
+        type="primary",
+        use_container_width=True
+    ):
+        st.login()
+
+    st.stop()
+
+# Logged-in user
+with st.sidebar:
+    st.success(f"Signed in as {st.user.email}")
+
+    if st.button(
+        "Logout",
+        use_container_width=True
+    ):
+        st.logout()
 
 st.set_page_config(
     page_title="NEXORA",
