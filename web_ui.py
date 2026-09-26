@@ -260,8 +260,8 @@ with col4:
 with col5:
     with st.container(border=True):
         st.markdown("### 📚")
-        st.markdown("**RAG**")
-        st.caption("Search documents")
+        st.markdown("**PDF**")
+        st.caption("Read documents")
 
 st.divider()
 
@@ -287,7 +287,7 @@ command = st.text_area(
 # DOCUMENT UPLOAD
 # -------------------------------------------------
 
-with st.expander("📎 Upload a document for RAG"):
+with st.expander("📎 Upload a PDF "):
 
     uploaded_file = st.file_uploader(
         "Choose PDF, DOCX or TXT",
