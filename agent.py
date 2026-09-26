@@ -1,4 +1,3 @@
-
 import os
 from datetime import datetime
 from typing import TypedDict, Optional
@@ -22,6 +21,18 @@ except Exception:
     client = None
 
 
+VALID_ACTIONS = {
+    "MEETING",
+    "ADD_TASK",
+    "SHOW_MEETING",
+    "SHOW_TASK",
+    "SEND_EMAIL",
+    "MEMORY",
+    "RAG",
+    "OTHER"
+}
+
+
 # =========================================================
 # AGENT STATE
 # =========================================================
@@ -43,55 +54,197 @@ def use_ai() -> bool:
     return client is not None
 
 
-def local_classify(command: str) -> str:
+def normalize_action(text: str) -> str:
 
-    text = command.lower().strip()
+    text = text.strip().upper()
 
-    if any(word in text for word in [
-        "schedule", "meeting", "appointment", "book a meeting"
-    ]):
-        return "MEETING"
+    if text in VALID_ACTIONS:
+        return text
 
-    if any(word in text for word in [
-        "add a task", "add task", "create a task", "new task",
-        "remind me to"
-    ]):
-        return "ADD_TASK"
+    for action in VALID_ACTIONS:
 
-    if any(word in text for word in [
-        "show my tasks", "show tasks", "list my tasks",
-        "what are my tasks"
-    ]):
-        return "SHOW_TASK"
-
-    if any(word in text for word in [
-        "show my meetings", "show meetings", "list my meetings",
-        "what meetings do i have"
-    ]):
-        return "SHOW_MEETING"
-
-    if any(word in text for word in [
-        "send an email", "send email", "email",
-        "mail"
-    ]):
-        return "SEND_EMAIL"
-
-    if any(word in text for word in [
-        "remember", "do you remember", "what do you remember",
-        "save this memory"
-    ]):
-        return "MEMORY"
-
-    if any(word in text for word in [
-        "document", "pdf", "docx", "jdbc", "rag",
-        "uploaded file"
-    ]):
-        return "RAG"
+        if action in text:
+            return action
 
     return "OTHER"
 
 
-def ask_permission(action: str, state: AgentState) -> bool:
+# =========================================================
+# LOCAL FALLBACK CLASSIFIER
+# =========================================================
+
+def local_classify(command: str) -> str:
+
+    text = command.lower().strip()
+
+    # -----------------------------------------------------
+    # MEETING
+    # -----------------------------------------------------
+
+    meeting_words = [
+        "meeting",
+        "appointment",
+        "calendar",
+        "schedule",
+        "scheduled",
+        "book",
+        "arrange",
+        "organize",
+        "meet"
+    ]
+
+    if any(word in text for word in meeting_words):
+        return "MEETING"
+
+    # -----------------------------------------------------
+    # SHOW TASK
+    # -----------------------------------------------------
+
+    show_task_patterns = [
+        "what are my tasks",
+        "what do i need to do",
+        "show my tasks",
+        "show tasks",
+        "list my tasks",
+        "my task list",
+        "tasks do i have",
+        "tasks that i have",
+        "saved tasks",
+        "pending tasks",
+        "to do list",
+        "todo list"
+    ]
+
+    if any(pattern in text for pattern in show_task_patterns):
+        return "SHOW_TASK"
+
+    # -----------------------------------------------------
+    # SHOW MEETING
+    # -----------------------------------------------------
+
+    show_meeting_patterns = [
+        "show my meetings",
+        "show meetings",
+        "list my meetings",
+        "what meetings do i have",
+        "my meetings",
+        "scheduled meetings",
+        "what is scheduled",
+        "anything scheduled"
+    ]
+
+    if any(pattern in text for pattern in show_meeting_patterns):
+        return "SHOW_MEETING"
+
+    # -----------------------------------------------------
+    # SEND EMAIL
+    # -----------------------------------------------------
+
+    email_words = [
+        "send an email",
+        "send email",
+        "email",
+        "mail",
+        "send a message",
+        "send message"
+    ]
+
+    if any(word in text for word in email_words):
+        return "SEND_EMAIL"
+
+    # -----------------------------------------------------
+    # MEMORY
+    # -----------------------------------------------------
+
+    memory_words = [
+        "remember",
+        "memorize",
+        "keep in mind",
+        "save this",
+        "store this",
+        "what do you remember",
+        "do you remember",
+        "what have i told you"
+    ]
+
+    if any(word in text for word in memory_words):
+        return "MEMORY"
+
+    # -----------------------------------------------------
+    # RAG / DOCUMENT
+    # -----------------------------------------------------
+
+    rag_words = [
+        "pdf",
+        "document",
+        "uploaded file",
+        "uploaded document",
+        "docx",
+        "jdbc",
+        "batch updates",
+        "from my document",
+        "from the document",
+        "from the pdf"
+    ]
+
+    if any(word in text for word in rag_words):
+        return "RAG"
+
+    # -----------------------------------------------------
+    # ADD TASK
+    # -----------------------------------------------------
+
+    task_words = [
+        "task",
+        "todo",
+        "to-do",
+        "remind me",
+        "i need to",
+        "i have to",
+        "i want to",
+        "i should",
+        "don't let me forget",
+        "need to",
+        "have to",
+        "should",
+        "must",
+        "prepare",
+        "study",
+        "learn",
+        "practice",
+        "revise",
+        "finish",
+        "complete",
+        "submit",
+        "work on"
+    ]
+
+    if any(word in text for word in task_words):
+
+        # Avoid treating questions about existing tasks as ADD_TASK
+        if any(word in text for word in [
+            "what are",
+            "what do i need",
+            "show",
+            "list",
+            "saved",
+            "pending"
+        ]):
+            return "SHOW_TASK"
+
+        return "ADD_TASK"
+
+    return "OTHER"
+
+
+# =========================================================
+# PERMISSION
+# =========================================================
+
+def ask_permission(
+    action: str,
+    state: AgentState
+) -> bool:
 
     # Web UI explicitly grants permission
     if state.get("permission_granted", False):
@@ -100,7 +253,9 @@ def ask_permission(action: str, state: AgentState) -> bool:
     # Terminal mode
     if os.getenv("NEXORA_UI") != "1":
 
-        print(f"\nPermission required for: {action}")
+        print(
+            f"\nPermission required for: {action}"
+        )
 
         choice = input(
             "Do you want to allow this action? (yes/no): "
@@ -114,6 +269,7 @@ def ask_permission(action: str, state: AgentState) -> bool:
 # =========================================================
 # ANALYZE REQUEST
 # =========================================================
+
 def analyze_request(state):
 
     command = state.get(
@@ -133,15 +289,23 @@ def analyze_request(state):
     prompt = f"""
 You are NEXORA's intelligent intent router.
 
-Your job is to understand the USER'S MEANING and select the correct tool.
+Your job is to understand the user's MEANING
+and select the correct tool.
 
 IMPORTANT:
 - Do NOT depend on exact keywords.
-- Understand natural language, paraphrasing, slang, short sentences,
-  polite requests, indirect requests, and different sentence structures.
-- The same intent can be expressed in many different ways.
+- Understand natural language.
+- Understand paraphrasing.
+- Understand short requests.
+- Understand indirect requests.
+- Understand different sentence structures.
+- Understand requests such as:
+  "I want to study Java tomorrow"
+  "I need to prepare for my interview"
+  "Please put this on my task list"
+  "Don't let me forget my assignment"
 - Focus on what the user wants NEXORA to DO.
-- Do not return OTHER when the request clearly matches one of the supported tools.
+- Do not return OTHER when a supported action clearly matches.
 
 Choose exactly ONE:
 
@@ -154,106 +318,65 @@ MEMORY
 RAG
 OTHER
 
-INTENT DEFINITIONS:
-
 MEETING:
-The user wants to schedule, arrange, book, set, create,
-plan, or organize a meeting or appointment.
+Schedule, arrange, book, create, organize, or plan
+a meeting, appointment, or calendar event.
 
 ADD_TASK:
-The user wants to add something to their task list,
-create a task, remember something as a task,
-track something they need to do, or asks NEXORA to keep
-something as a future task.
+The user wants to add something to a task list
+or create something that they need to do.
 
-SHOW_MEETING:
-The user wants to see, list, check, or know their meetings.
+Examples:
+"I want to study Java tomorrow"
+"I need to complete my project"
+"Make sure I prepare for my interview"
+"Don't let me forget my assignment"
+"Please add studying DSA to my tasks"
 
 SHOW_TASK:
-The user wants to see, list, check, or know their tasks.
+The user wants to see existing tasks.
+
+Examples:
+"What do I need to do?"
+"What are my tasks?"
+"Show my saved tasks"
+"List everything on my task list"
+
+SHOW_MEETING:
+The user wants to see existing meetings.
+
+Examples:
+"What meetings do I have?"
+"Anything scheduled?"
+"Show my appointments"
 
 SEND_EMAIL:
-The user wants NEXORA to send, compose, write, or deliver
-an email/message through Gmail.
+The user wants NEXORA to send an email or message.
+
+Examples:
+"Tell Ravi that I will be late"
+"Please send an email to Ravi"
+"Mail this person"
 
 MEMORY:
-The user wants NEXORA to remember/save/store personal information,
-OR the user is asking what NEXORA remembers about them.
+The user wants NEXORA to save or retrieve memory.
+
+Examples:
+"Remember that I am learning Java"
+"Keep this in mind"
+"What do you remember about me?"
+"Do you know what I am learning?"
 
 RAG:
-The user is asking a question that should be answered using
-the uploaded PDF/document.
+The user wants an answer from the uploaded document/PDF.
+
+Examples:
+"What does the PDF say about JDBC?"
+"Explain batch updates from my document"
+"Answer this from the uploaded document"
 
 OTHER:
-Only use this when the request does not match any supported tool.
-
-EXAMPLES:
-
-"I have to study Java tomorrow"
--> ADD_TASK
-
-"Make sure I prepare Java tomorrow"
--> ADD_TASK
-
-"I need to finish my assignment"
--> ADD_TASK
-
-"Could you put this on my task list?"
--> ADD_TASK
-
-"What do I need to do?"
--> SHOW_TASK
-
-"What have I saved as tasks?"
--> SHOW_TASK
-
-"I have a meeting with Ravi tomorrow at 10"
--> MEETING
-
-"Can you arrange a meeting with Ravi for tomorrow?"
--> MEETING
-
-"Put Ravi on my calendar for 10 AM tomorrow"
--> MEETING
-
-"What meetings do I have?"
--> SHOW_MEETING
-
-"Do I have anything scheduled?"
--> SHOW_MEETING
-
-"Tell Ravi that I will be late"
--> SEND_EMAIL
-
-"Please send Ravi an email saying I am late"
--> SEND_EMAIL
-
-"Can you mail this person?"
--> SEND_EMAIL
-
-"Keep in mind that I am learning Java"
--> MEMORY
-
-"Please remember my interview is Monday"
--> MEMORY
-
-"What do you remember about me?"
--> MEMORY
-
-"Do you know what I am learning?"
--> MEMORY
-
-"What did I ask you to remember?"
--> MEMORY
-
-"What does the uploaded document say about JDBC?"
--> RAG
-
-"Explain batch updates from the PDF"
--> RAG
-
-"Can you answer this from my document?"
--> RAG
+Only when the request does not match any supported tool.
 
 USER REQUEST:
 {command}
@@ -261,87 +384,75 @@ USER REQUEST:
 Return ONLY the action name.
 """
 
-    try:
+    # -----------------------------------------------------
+    # AI CLASSIFICATION
+    # -----------------------------------------------------
 
-        response = client.responses.create(
-            model="gpt-5.6-luna",
-            input=prompt
-        )
+    if use_ai():
 
-        action = (
-            response.output_text
-            .strip()
-            .upper()
-        )
+        try:
 
-        valid_actions = {
-            "MEETING",
-            "ADD_TASK",
-            "SHOW_MEETING",
-            "SHOW_TASK",
-            "SEND_EMAIL",
-            "MEMORY",
-            "RAG",
-            "OTHER"
-        }
-
-        if action not in valid_actions:
-
-            # Retry once with a stricter classification request
-            retry = client.responses.create(
+            response = client.responses.create(
                 model="gpt-5.6-luna",
-                input=f"""
-Classify this user request by INTENT.
-
-Possible actions:
-MEETING
-ADD_TASK
-SHOW_MEETING
-SHOW_TASK
-SEND_EMAIL
-MEMORY
-RAG
-OTHER
-
-Understand the meaning, not exact words.
-
-USER REQUEST:
-{command}
-
-Return ONLY one action name.
-"""
+                input=prompt
             )
 
-            action = (
-                retry.output_text
+            raw_action = (
+                response.output_text
                 .strip()
                 .upper()
             )
 
-        if action not in valid_actions:
+            action = normalize_action(
+                raw_action
+            )
 
-            action = "OTHER"
+            # -------------------------------------------------
+            # If AI returns OTHER, check local fallback too
+            # -------------------------------------------------
 
-        print(
-            "NEXORA understood:",
-            action
-        )
+            if action == "OTHER":
 
-        return {
-            "action": action
-        }
+                fallback_action = local_classify(
+                    command
+                )
 
-    except Exception as e:
+                if fallback_action != "OTHER":
+                    action = fallback_action
 
-        print(
-            "AI classification error:",
-            e
-        )
+            print(
+                "NEXORA understood:",
+                action
+            )
 
-        return {
-            "action": "OTHER",
-            "result": "Unable to understand the request."
-        }
+            return {
+                "action": action
+            }
+
+        except Exception as e:
+
+            print(
+                "AI classification error:",
+                e
+            )
+
+    # -----------------------------------------------------
+    # LOCAL FALLBACK
+    # -----------------------------------------------------
+
+    fallback_action = local_classify(
+        command
+    )
+
+    print(
+        "NEXORA local fallback:",
+        fallback_action
+    )
+
+    return {
+        "action": fallback_action
+    }
+
 
 # =========================================================
 # MEETING NODE
@@ -349,7 +460,10 @@ Return ONLY one action name.
 
 def meeting_node(state: AgentState):
 
-    command = state.get("command", "").strip()
+    command = state.get(
+        "command",
+        ""
+    ).strip()
 
     person = ""
     date = ""
@@ -364,9 +478,7 @@ def meeting_node(state: AgentState):
         try:
 
             details = client.responses.create(
-
                 model="gpt-5.6-luna",
-
                 input=f"""
 Today is {datetime.now().strftime('%Y-%m-%d')}.
 
@@ -374,8 +486,8 @@ Extract the meeting details from this request:
 
 {command}
 
-Convert relative dates such as tomorrow, today and next Monday
-into YYYY-MM-DD.
+Convert relative dates such as tomorrow, today
+and next Monday into YYYY-MM-DD.
 
 Convert time into 24-hour HH:MM format.
 
@@ -387,42 +499,76 @@ TIME: HH:MM
 """
             )
 
-            lines = details.output_text.strip().splitlines()
+            lines = (
+                details.output_text
+                .strip()
+                .splitlines()
+            )
 
             for line in lines:
 
                 upper_line = line.upper()
 
                 if upper_line.startswith("PERSON:"):
-                    person = line.split(":", 1)[1].strip()
+
+                    person = (
+                        line.split(
+                            ":",
+                            1
+                        )[1].strip()
+                    )
 
                 elif upper_line.startswith("DATE:"):
-                    date = line.split(":", 1)[1].strip()
+
+                    date = (
+                        line.split(
+                            ":",
+                            1
+                        )[1].strip()
+                    )
 
                 elif upper_line.startswith("TIME:"):
-                    time = line.split(":", 1)[1].strip()
+
+                    time = (
+                        line.split(
+                            ":",
+                            1
+                        )[1].strip()
+                    )
 
         except Exception as e:
 
-            print("Meeting AI extraction failed:", e)
+            print(
+                "Meeting AI extraction failed:",
+                e
+            )
 
     # -----------------------------------------
-    # Basic local fallback extraction
+    # Basic fallback extraction
     # -----------------------------------------
 
     if not person:
 
         words = command.split()
 
-        if "with" in [w.lower() for w in words]:
+        lowered_words = [
+            word.lower()
+            for word in words
+        ]
+
+        if "with" in lowered_words:
 
             try:
-                index = [
-                    w.lower() for w in words
-                ].index("with")
+
+                index = lowered_words.index(
+                    "with"
+                )
 
                 if index + 1 < len(words):
-                    person = words[index + 1]
+
+                    person = words[
+                        index + 1
+                    ]
 
             except Exception:
                 pass
@@ -431,7 +577,9 @@ TIME: HH:MM
         person = "Unknown"
 
     if not date:
-        date = datetime.now().strftime("%Y-%m-%d")
+        date = datetime.now().strftime(
+            "%Y-%m-%d"
+        )
 
     if not time:
         time = "10:00"
@@ -476,11 +624,19 @@ TIME: HH:MM
             person,
             date,
             time,
-            state.get("google_access_token")
+            state.get(
+                "google_access_token"
+            )
         )
 
-        print("\nGoogle Calendar Event Created!")
-        print("Calendar Link:", link)
+        print(
+            "\nGoogle Calendar Event Created!"
+        )
+
+        print(
+            "Calendar Link:",
+            link
+        )
 
         return {
             "result": link
@@ -488,7 +644,10 @@ TIME: HH:MM
 
     except Exception as e:
 
-        print("Calendar error:", e)
+        print(
+            "Calendar error:",
+            e
+        )
 
         return {
             "result": f"Calendar error: {e}"
@@ -501,7 +660,10 @@ TIME: HH:MM
 
 def task_node(state: AgentState):
 
-    command = state.get("command", "").strip()
+    command = state.get(
+        "command",
+        ""
+    ).strip()
 
     task = command
 
@@ -510,25 +672,58 @@ def task_node(state: AgentState):
         try:
 
             task_response = client.responses.create(
-
                 model="gpt-5.6-luna",
-
                 input=f"""
-Extract only the task from this request:
+Extract only the actual task from this request.
 
+User request:
 {command}
+
+Remove phrases such as:
+"I want to",
+"I need to",
+"please",
+"add a task to",
+"don't let me forget to"
 
 Return only the task text.
 """
             )
 
-            task = task_response.output_text.strip()
+            extracted_task = (
+                task_response.output_text
+                .strip()
+            )
+
+            if extracted_task:
+                task = extracted_task
 
         except Exception as e:
 
-            print("Task AI extraction failed:", e)
+            print(
+                "Task AI extraction failed:",
+                e
+            )
 
-    tools.add_task(task)
+    if not task:
+        return {
+            "result": "Task description is missing."
+        }
+
+    try:
+
+        tools.add_task(task)
+
+    except Exception as e:
+
+        print(
+            "Task save error:",
+            e
+        )
+
+        return {
+            "result": "Unable to add the task."
+        }
 
     print("\nTask Added!")
     print("Task:", task)
@@ -544,7 +739,20 @@ Return only the task text.
 
 def show_task_node(state: AgentState):
 
-    tasks = tools.get_tasks()
+    try:
+
+        tasks = tools.get_tasks()
+
+    except Exception as e:
+
+        print(
+            "Task retrieval error:",
+            e
+        )
+
+        return {
+            "result": "Unable to retrieve tasks."
+        }
 
     print("\nYour Tasks:")
 
@@ -568,7 +776,20 @@ def show_task_node(state: AgentState):
 
 def show_meeting_node(state: AgentState):
 
-    meetings = tools.get_meetings()
+    try:
+
+        meetings = tools.get_meetings()
+
+    except Exception as e:
+
+        print(
+            "Meeting retrieval error:",
+            e
+        )
+
+        return {
+            "result": "Unable to retrieve meetings."
+        }
 
     print("\nYour Meetings:")
 
@@ -592,28 +813,61 @@ def show_meeting_node(state: AgentState):
 
 def memory_node(state: AgentState):
 
-    command = state.get("command", "").strip()
+    command = state.get(
+        "command",
+        ""
+    ).strip()
 
     memory_action = ""
+
+    # -----------------------------------------
+    # AI classification
+    # -----------------------------------------
 
     if use_ai():
 
         try:
 
             memory_type = client.responses.create(
-
                 model="gpt-5.6-luna",
-
                 input=f"""
-Determine whether the user wants to SAVE or RETRIEVE memory.
+Determine the user's MEMORY intent.
 
-User request:
-{command}
-
-Return exactly one:
+Choose exactly one:
 
 SAVE
 RETRIEVE
+
+SAVE means:
+The user is giving information that NEXORA should remember.
+
+RETRIEVE means:
+The user is asking what NEXORA already remembers.
+
+Examples:
+
+"Remember that I am learning Java"
+-> SAVE
+
+"Keep in mind that I have an interview Monday"
+-> SAVE
+
+"I want you to remember this"
+-> SAVE
+
+"What do you remember about me?"
+-> RETRIEVE
+
+"Do you know what I am learning?"
+-> RETRIEVE
+
+"What have I asked you to remember?"
+-> RETRIEVE
+
+USER REQUEST:
+{command}
+
+Return ONLY SAVE or RETRIEVE.
 """
             )
 
@@ -623,25 +877,48 @@ RETRIEVE
                 .upper()
             )
 
+            if memory_action not in [
+                "SAVE",
+                "RETRIEVE"
+            ]:
+
+                memory_action = ""
+
         except Exception as e:
 
-            print("Memory AI classification failed:", e)
+            print(
+                "Memory AI classification failed:",
+                e
+            )
 
+    # -----------------------------------------
     # Local fallback
-    if memory_action not in ["SAVE", "RETRIEVE"]:
+    # -----------------------------------------
+
+    if memory_action == "":
 
         text = command.lower()
 
-        if any(word in text for word in [
-            "remember",
-            "save this memory"
-        ]):
+        retrieve_patterns = [
+            "what do you remember",
+            "do you remember",
+            "what have i asked you to remember",
+            "what have i told you",
+            "what do you know about me",
+            "show my memories",
+            "show memories"
+        ]
 
-            memory_action = "SAVE"
+        if any(
+            pattern in text
+            for pattern in retrieve_patterns
+        ):
+
+            memory_action = "RETRIEVE"
 
         else:
 
-            memory_action = "RETRIEVE"
+            memory_action = "SAVE"
 
     # -----------------------------------------
     # SAVE
@@ -656,12 +933,10 @@ RETRIEVE
             try:
 
                 memory_response = client.responses.create(
-
                     model="gpt-5.6-luna",
-
                     input=f"""
-Extract the important information the user wants NEXORA
-to remember.
+Extract only the important information
+the user wants NEXORA to remember.
 
 User request:
 {command}
@@ -670,13 +945,38 @@ Return only the information to remember.
 """
                 )
 
-                information = memory_response.output_text.strip()
+                extracted_information = (
+                    memory_response.output_text
+                    .strip()
+                )
+
+                if extracted_information:
+
+                    information = extracted_information
 
             except Exception as e:
 
-                print("Memory extraction failed:", e)
+                print(
+                    "Memory extraction failed:",
+                    e
+                )
 
-        tools.save_memory(information)
+        try:
+
+            tools.save_memory(
+                information
+            )
+
+        except Exception as e:
+
+            print(
+                "Memory save error:",
+                e
+            )
+
+            return {
+                "result": "Unable to save memory."
+            }
 
         return {
             "result": f"Memory saved: {information}"
@@ -686,7 +986,20 @@ Return only the information to remember.
     # RETRIEVE
     # -----------------------------------------
 
-    memories = tools.get_memories()
+    try:
+
+        memories = tools.get_memories()
+
+    except Exception as e:
+
+        print(
+            "Memory retrieval error:",
+            e
+        )
+
+        return {
+            "result": "Unable to retrieve memories."
+        }
 
     if memories:
 
@@ -705,15 +1018,23 @@ Return only the information to remember.
 
 def rag_node(state: AgentState):
 
-    command = state.get("command", "").strip()
+    command = state.get(
+        "command",
+        ""
+    ).strip()
 
     try:
 
-        relevant_text = tools.search_document(command)
+        relevant_text = tools.search_document(
+            command
+        )
 
     except Exception as e:
 
-        print("Document search error:", e)
+        print(
+            "Document search error:",
+            e
+        )
 
         return {
             "result": f"Document search error: {e}"
@@ -734,13 +1055,12 @@ def rag_node(state: AgentState):
     try:
 
         response = client.responses.create(
-
             model="gpt-5.6-luna",
-
             input=f"""
 You are NEXORA.
 
-Answer the user's question using the document content below.
+Answer the user's question using
+the document content below.
 
 DOCUMENT CONTENT:
 {relevant_text}
@@ -752,7 +1072,16 @@ Give a clear and direct answer.
 """
         )
 
-        answer = response.output_text.strip()
+        answer = (
+            response.output_text
+            .strip()
+        )
+
+        if not answer:
+
+            return {
+                "result": relevant_text
+            }
 
         return {
             "result": answer
@@ -760,7 +1089,10 @@ Give a clear and direct answer.
 
     except Exception as e:
 
-        print("RAG AI error:", e)
+        print(
+            "RAG AI error:",
+            e
+        )
 
         return {
             "result": relevant_text
@@ -773,7 +1105,10 @@ Give a clear and direct answer.
 
 def email_node(state: AgentState):
 
-    command = state.get("command", "").strip()
+    command = state.get(
+        "command",
+        ""
+    ).strip()
 
     recipient = ""
     message = ""
@@ -787,9 +1122,7 @@ def email_node(state: AgentState):
         try:
 
             details = client.responses.create(
-
                 model="gpt-5.6-luna",
-
                 input=f"""
 Extract the email details from this request:
 
@@ -802,32 +1135,47 @@ MESSAGE: message text
 """
             )
 
-            lines = details.output_text.strip().splitlines()
+            lines = (
+                details.output_text
+                .strip()
+                .splitlines()
+            )
 
             for line in lines:
 
                 upper_line = line.upper()
 
-                if upper_line.startswith("RECIPIENT:"):
+                if upper_line.startswith(
+                    "RECIPIENT:"
+                ):
 
                     recipient = (
-                        line.split(":", 1)[1]
-                        .strip()
+                        line.split(
+                            ":",
+                            1
+                        )[1].strip()
                     )
 
-                elif upper_line.startswith("MESSAGE:"):
+                elif upper_line.startswith(
+                    "MESSAGE:"
+                ):
 
                     message = (
-                        line.split(":", 1)[1]
-                        .strip()
+                        line.split(
+                            ":",
+                            1
+                        )[1].strip()
                     )
 
         except Exception as e:
 
-            print("Email AI extraction failed:", e)
+            print(
+                "Email AI extraction failed:",
+                e
+            )
 
     # -----------------------------------------
-    # Local fallback extraction
+    # Local fallback recipient
     # -----------------------------------------
 
     if not recipient:
@@ -836,14 +1184,20 @@ MESSAGE: message text
 
         for part in parts:
 
-            if "@" in part and "." in part:
+            if (
+                "@" in part
+                and "." in part
+            ):
 
-                recipient = (
-                    part
-                    .strip(".,!?")
+                recipient = part.strip(
+                    ".,!?"
                 )
 
                 break
+
+    # -----------------------------------------
+    # Local fallback message
+    # -----------------------------------------
 
     if not message:
 
@@ -877,7 +1231,10 @@ MESSAGE: message text
             "result": "Email address is missing."
         }
 
-    if "@" not in recipient or "." not in recipient:
+    if (
+        "@" not in recipient
+        or "." not in recipient
+    ):
 
         return {
             "result": "Invalid email address."
@@ -921,11 +1278,17 @@ MESSAGE: message text
         result = tools.send_email(
             recipient,
             message,
-            state.get("file_path"),
-            state.get("google_access_token")
+            state.get(
+                "file_path"
+            ),
+            state.get(
+                "google_access_token"
+            )
         )
 
-        print("\n" + result)
+        print(
+            "\n" + result
+        )
 
         return {
             "result": result
@@ -933,7 +1296,10 @@ MESSAGE: message text
 
     except Exception as e:
 
-        print("Email error:", e)
+        print(
+            "Email error:",
+            e
+        )
 
         return {
             "result": f"Email could not be sent: {e}"
@@ -957,27 +1323,37 @@ def other_node(state: AgentState):
 
 def route_request(state: AgentState):
 
-    action = state.get("action", "OTHER")
+    action = state.get(
+        "action",
+        "OTHER"
+    )
 
     if action == "MEETING":
+
         return "meeting"
 
     elif action == "ADD_TASK":
+
         return "task"
 
     elif action == "SHOW_TASK":
+
         return "show_task"
 
     elif action == "SHOW_MEETING":
+
         return "show_meeting"
 
     elif action == "MEMORY":
+
         return "memory"
 
     elif action == "RAG":
+
         return "rag"
 
     elif action == "SEND_EMAIL":
+
         return "email"
 
     return "other"
@@ -987,47 +1363,58 @@ def route_request(state: AgentState):
 # LANGGRAPH
 # =========================================================
 
-graph = StateGraph(AgentState)
+graph = StateGraph(
+    AgentState
+)
+
 
 graph.add_node(
     "analyze",
     analyze_request
 )
 
+
 graph.add_node(
     "meeting",
     meeting_node
 )
+
 
 graph.add_node(
     "task",
     task_node
 )
 
+
 graph.add_node(
     "show_task",
     show_task_node
 )
+
 
 graph.add_node(
     "show_meeting",
     show_meeting_node
 )
 
+
 graph.add_node(
     "memory",
     memory_node
 )
+
 
 graph.add_node(
     "rag",
     rag_node
 )
 
+
 graph.add_node(
     "email",
     email_node
 )
+
 
 graph.add_node(
     "other",
@@ -1042,11 +1429,8 @@ graph.add_edge(
 
 
 graph.add_conditional_edges(
-
     "analyze",
-
     route_request,
-
     {
         "meeting": "meeting",
         "task": "task",
@@ -1065,35 +1449,42 @@ graph.add_edge(
     END
 )
 
+
 graph.add_edge(
     "task",
     END
 )
+
 
 graph.add_edge(
     "show_task",
     END
 )
 
+
 graph.add_edge(
     "show_meeting",
     END
 )
+
 
 graph.add_edge(
     "memory",
     END
 )
 
+
 graph.add_edge(
     "rag",
     END
 )
 
+
 graph.add_edge(
     "email",
     END
 )
+
 
 graph.add_edge(
     "other",
@@ -1112,7 +1503,7 @@ if __name__ == "__main__":
 
     result = app.invoke({
 
-        "command": "show my tasks",
+        "command": "I want to study Java tomorrow",
 
         "action": "",
 
@@ -1126,10 +1517,10 @@ if __name__ == "__main__":
     })
 
     print("\nFinal Result:")
+
     print(
         result.get(
             "result",
             "No result."
         )
     )
-
