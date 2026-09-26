@@ -5,6 +5,8 @@ from typing import TypedDict, Optional
 from dotenv import load_dotenv
 from openai import OpenAI
 from langgraph.graph import StateGraph, START, END
+from pypdf import PdfReader
+from docx import Document
 
 import tools
 
@@ -1015,6 +1017,9 @@ Return only the information to remember.
 # =========================================================
 # RAG NODE
 # =========================================================
+# =========================================================
+# RAG / DOCUMENT NODE
+# =========================================================
 
 def rag_node(state: AgentState):
 
@@ -1023,52 +1028,287 @@ def rag_node(state: AgentState):
         ""
     ).strip()
 
+    file_path = state.get(
+        "file_path"
+    )
+
+    # -----------------------------------------------------
+    # Find document
+    # -----------------------------------------------------
+
+    if not file_path:
+
+        if os.path.exists("questions.docx"):
+            file_path = "questions.docx"
+
+    if not file_path or not os.path.exists(file_path):
+
+        return {
+            "result": "Please upload a PDF or document first."
+        }
+
+    # -----------------------------------------------------
+    # Read document
+    # -----------------------------------------------------
+
     try:
 
-        relevant_text = tools.search_document(
-            command
-        )
+        if file_path.lower().endswith(".pdf"):
+
+            reader = PdfReader(file_path)
+
+            document_text = ""
+
+            for page in reader.pages:
+
+                text = page.extract_text()
+
+                if text:
+                    document_text += text + "\n"
+
+        elif file_path.lower().endswith(".docx"):
+
+            document = Document(file_path)
+
+            parts = []
+
+            for paragraph in document.paragraphs:
+
+                if paragraph.text.strip():
+
+                    parts.append(
+                        paragraph.text.strip()
+                    )
+
+            for table in document.tables:
+
+                for row in table.rows:
+
+                    row_text = " | ".join(
+                        cell.text.strip()
+                        for cell in row.cells
+                        if cell.text.strip()
+                    )
+
+                    if row_text:
+                        parts.append(row_text)
+
+            document_text = "\n".join(parts)
+
+        elif file_path.lower().endswith(".txt"):
+
+            with open(
+                file_path,
+                "r",
+                encoding="utf-8"
+            ) as file:
+
+                document_text = file.read()
+
+        else:
+
+            return {
+                "result": "Unsupported document format."
+            }
 
     except Exception as e:
 
         print(
-            "Document search error:",
+            "Document reading error:",
             e
         )
 
         return {
-            "result": f"Document search error: {e}"
+            "result": f"Unable to read the document: {e}"
         }
 
-    if not relevant_text:
+    if not document_text.strip():
 
         return {
-            "result": "No relevant information found."
+            "result": "The uploaded document is empty."
         }
 
-    if not use_ai():
+    # -----------------------------------------------------
+    # Decide document request type using AI
+    # -----------------------------------------------------
 
-        return {
-            "result": relevant_text
-        }
+    request_type = "QUESTION"
+
+    if use_ai():
+
+        try:
+
+            analysis_type = client.responses.create(
+
+                model="gpt-5.6-luna",
+
+                input=f"""
+Understand what the user wants from the uploaded document.
+
+Choose exactly one:
+
+ANALYZE
+QUESTION
+
+ANALYZE means:
+The user wants a summary, overview, key points,
+important questions, insights, or a complete analysis
+of the document.
+
+Examples:
+"Summarize the document"
+"Give me the key points"
+"What are the important questions from this PDF?"
+"Analyze this document"
+"Give me summary, key points and important questions"
+
+QUESTION means:
+The user wants an answer to a specific question
+from the document.
+
+Examples:
+"What is PreparedStatement?"
+"Explain batch updates"
+"What does the document say about ResultSet?"
+
+USER REQUEST:
+{command}
+
+Return only ANALYZE or QUESTION.
+"""
+            )
+
+            value = (
+                analysis_type.output_text
+                .strip()
+                .upper()
+            )
+
+            if value in [
+                "ANALYZE",
+                "QUESTION"
+            ]:
+
+                request_type = value
+
+        except Exception as e:
+
+            print(
+                "Document request classification failed:",
+                e
+            )
+
+            text = command.lower()
+
+            if any(word in text for word in [
+                "summarize",
+                "summary",
+                "key points",
+                "important questions",
+                "analyze",
+                "overview"
+            ]):
+
+                request_type = "ANALYZE"
+
+    # -----------------------------------------------------
+    # DOCUMENT ANALYSIS
+    # -----------------------------------------------------
+
+    if request_type == "ANALYZE":
+
+        try:
+
+            response = client.responses.create(
+
+                model="gpt-5.6-luna",
+
+                input=f"""
+You are NEXORA's document analysis assistant.
+
+Analyze the uploaded document below.
+
+DOCUMENT:
+{document_text}
+
+USER REQUEST:
+{command}
+
+Give the result in exactly this structure:
+
+📄 Document Summary
+
+Write a clear and easy-to-understand summary
+of the complete document.
+
+🔑 Key Points
+
+Give the most important points from the document.
+Use numbered points.
+
+❓ Important Questions
+
+Generate important exam/interview/study questions
+that can be answered from the document.
+Use numbered questions.
+
+Rules:
+- Base everything only on the document.
+- Do not invent information.
+- Keep the summary concise but useful.
+- Focus on the major concepts and topics.
+- Important Questions should cover the main topics.
+"""
+            )
+
+            answer = (
+                response.output_text
+                .strip()
+            )
+
+            if answer:
+
+                return {
+                    "result": answer
+                }
+
+        except Exception as e:
+
+            print(
+                "Document analysis error:",
+                e
+            )
+
+            return {
+                "result": "Unable to analyze the document."
+            }
+
+    # -----------------------------------------------------
+    # SPECIFIC DOCUMENT QUESTION
+    # -----------------------------------------------------
 
     try:
 
         response = client.responses.create(
+
             model="gpt-5.6-luna",
+
             input=f"""
 You are NEXORA.
 
-Answer the user's question using
-the document content below.
+Answer the user's question using ONLY
+the uploaded document below.
 
-DOCUMENT CONTENT:
-{relevant_text}
+DOCUMENT:
+{document_text}
 
 USER QUESTION:
 {command}
 
-Give a clear and direct answer.
+Give a clear, direct and accurate answer.
+
+Do not invent information that is not present
+in the document.
 """
         )
 
@@ -1077,27 +1317,22 @@ Give a clear and direct answer.
             .strip()
         )
 
-        if not answer:
+        if answer:
 
             return {
-                "result": relevant_text
+                "result": answer
             }
-
-        return {
-            "result": answer
-        }
 
     except Exception as e:
 
         print(
-            "RAG AI error:",
+            "Document question error:",
             e
         )
 
-        return {
-            "result": relevant_text
-        }
-
+    return {
+        "result": "Unable to answer from the document."
+    }
 
 # =========================================================
 # EMAIL NODE
