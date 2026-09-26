@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 from typing import TypedDict, Optional
 
@@ -40,6 +41,7 @@ VALID_ACTIONS = {
 # =========================================================
 
 class AgentState(TypedDict, total=False):
+
     command: str
     action: str
     result: str
@@ -53,6 +55,7 @@ class AgentState(TypedDict, total=False):
 # =========================================================
 
 def use_ai() -> bool:
+
     return client is not None
 
 
@@ -96,6 +99,7 @@ def local_classify(command: str) -> str:
     ]
 
     if any(word in text for word in meeting_words):
+
         return "MEETING"
 
     # -----------------------------------------------------
@@ -117,7 +121,11 @@ def local_classify(command: str) -> str:
         "todo list"
     ]
 
-    if any(pattern in text for pattern in show_task_patterns):
+    if any(
+        pattern in text
+        for pattern in show_task_patterns
+    ):
+
         return "SHOW_TASK"
 
     # -----------------------------------------------------
@@ -135,7 +143,11 @@ def local_classify(command: str) -> str:
         "anything scheduled"
     ]
 
-    if any(pattern in text for pattern in show_meeting_patterns):
+    if any(
+        pattern in text
+        for pattern in show_meeting_patterns
+    ):
+
         return "SHOW_MEETING"
 
     # -----------------------------------------------------
@@ -151,7 +163,11 @@ def local_classify(command: str) -> str:
         "send message"
     ]
 
-    if any(word in text for word in email_words):
+    if any(
+        word in text
+        for word in email_words
+    ):
+
         return "SEND_EMAIL"
 
     # -----------------------------------------------------
@@ -169,7 +185,11 @@ def local_classify(command: str) -> str:
         "what have i told you"
     ]
 
-    if any(word in text for word in memory_words):
+    if any(
+        word in text
+        for word in memory_words
+    ):
+
         return "MEMORY"
 
     # -----------------------------------------------------
@@ -189,7 +209,11 @@ def local_classify(command: str) -> str:
         "from the pdf"
     ]
 
-    if any(word in text for word in rag_words):
+    if any(
+        word in text
+        for word in rag_words
+    ):
+
         return "RAG"
 
     # -----------------------------------------------------
@@ -221,17 +245,26 @@ def local_classify(command: str) -> str:
         "work on"
     ]
 
-    if any(word in text for word in task_words):
+    if any(
+        word in text
+        for word in task_words
+    ):
 
-        # Avoid treating questions about existing tasks as ADD_TASK
-        if any(word in text for word in [
-            "what are",
-            "what do i need",
-            "show",
-            "list",
-            "saved",
-            "pending"
-        ]):
+        # Avoid treating questions about existing tasks
+        # as ADD_TASK
+
+        if any(
+            word in text
+            for word in [
+                "what are",
+                "what do i need",
+                "show",
+                "list",
+                "saved",
+                "pending"
+            ]
+        ):
+
             return "SHOW_TASK"
 
         return "ADD_TASK"
@@ -249,10 +282,16 @@ def ask_permission(
 ) -> bool:
 
     # Web UI explicitly grants permission
-    if state.get("permission_granted", False):
+
+    if state.get(
+        "permission_granted",
+        False
+    ):
+
         return True
 
     # Terminal mode
+
     if os.getenv("NEXORA_UI") != "1":
 
         print(
@@ -263,7 +302,10 @@ def ask_permission(
             "Do you want to allow this action? (yes/no): "
         )
 
-        return choice.lower().strip() == "yes"
+        return (
+            choice.lower().strip()
+            == "yes"
+        )
 
     return False
 
@@ -287,6 +329,34 @@ def analyze_request(state):
         }
 
     print("\nAnalyzing request...")
+
+    # -----------------------------------------------------
+    # Uploaded document gets RAG directly
+    # -----------------------------------------------------
+
+    file_path = state.get(
+        "file_path"
+    )
+
+    if file_path and os.path.exists(
+        file_path
+    ):
+
+        if file_path.lower().endswith(
+            (
+                ".pdf",
+                ".docx",
+                ".txt"
+            )
+        ):
+
+            return {
+                "action": "RAG"
+            }
+
+    # -----------------------------------------------------
+    # AI CLASSIFICATION
+    # -----------------------------------------------------
 
     prompt = f"""
 You are NEXORA's intelligent intent router.
@@ -386,10 +456,6 @@ USER REQUEST:
 Return ONLY the action name.
 """
 
-    # -----------------------------------------------------
-    # AI CLASSIFICATION
-    # -----------------------------------------------------
-
     if use_ai():
 
         try:
@@ -420,6 +486,7 @@ Return ONLY the action name.
                 )
 
                 if fallback_action != "OTHER":
+
                     action = fallback_action
 
             print(
@@ -511,7 +578,9 @@ TIME: HH:MM
 
                 upper_line = line.upper()
 
-                if upper_line.startswith("PERSON:"):
+                if upper_line.startswith(
+                    "PERSON:"
+                ):
 
                     person = (
                         line.split(
@@ -520,7 +589,9 @@ TIME: HH:MM
                         )[1].strip()
                     )
 
-                elif upper_line.startswith("DATE:"):
+                elif upper_line.startswith(
+                    "DATE:"
+                ):
 
                     date = (
                         line.split(
@@ -529,7 +600,9 @@ TIME: HH:MM
                         )[1].strip()
                     )
 
-                elif upper_line.startswith("TIME:"):
+                elif upper_line.startswith(
+                    "TIME:"
+                ):
 
                     time = (
                         line.split(
@@ -573,17 +646,21 @@ TIME: HH:MM
                     ]
 
             except Exception:
+
                 pass
 
     if not person:
+
         person = "Unknown"
 
     if not date:
+
         date = datetime.now().strftime(
             "%Y-%m-%d"
         )
 
     if not time:
+
         time = "10:00"
 
     print("\nMeeting Details:")
@@ -698,6 +775,7 @@ Return only the task text.
             )
 
             if extracted_task:
+
                 task = extracted_task
 
         except Exception as e:
@@ -708,6 +786,7 @@ Return only the task text.
             )
 
     if not task:
+
         return {
             "result": "Task description is missing."
         }
@@ -761,6 +840,7 @@ def show_task_node(state: AgentState):
     if tasks:
 
         for task in tasks:
+
             print(task)
 
     else:
@@ -798,6 +878,7 @@ def show_meeting_node(state: AgentState):
     if meetings:
 
         for meeting in meetings:
+
             print(meeting)
 
     else:
@@ -1015,9 +1096,6 @@ Return only the information to remember.
 
 
 # =========================================================
-# RAG NODE
-# =========================================================
-# =========================================================
 # RAG / DOCUMENT NODE
 # =========================================================
 
@@ -1038,10 +1116,15 @@ def rag_node(state: AgentState):
 
     if not file_path:
 
-        if os.path.exists("questions.docx"):
+        if os.path.exists(
+            "questions.docx"
+        ):
+
             file_path = "questions.docx"
 
-    if not file_path or not os.path.exists(file_path):
+    if not file_path or not os.path.exists(
+        file_path
+    ):
 
         return {
             "result": "Please upload a PDF or document first."
@@ -1053,9 +1136,13 @@ def rag_node(state: AgentState):
 
     try:
 
-        if file_path.lower().endswith(".pdf"):
+        if file_path.lower().endswith(
+            ".pdf"
+        ):
 
-            reader = PdfReader(file_path)
+            reader = PdfReader(
+                file_path
+            )
 
             document_text = ""
 
@@ -1064,11 +1151,18 @@ def rag_node(state: AgentState):
                 text = page.extract_text()
 
                 if text:
-                    document_text += text + "\n"
 
-        elif file_path.lower().endswith(".docx"):
+                    document_text += (
+                        text + "\n"
+                    )
 
-            document = Document(file_path)
+        elif file_path.lower().endswith(
+            ".docx"
+        ):
+
+            document = Document(
+                file_path
+            )
 
             parts = []
 
@@ -1091,11 +1185,18 @@ def rag_node(state: AgentState):
                     )
 
                     if row_text:
-                        parts.append(row_text)
 
-            document_text = "\n".join(parts)
+                        parts.append(
+                            row_text
+                        )
 
-        elif file_path.lower().endswith(".txt"):
+            document_text = "\n".join(
+                parts
+            )
+
+        elif file_path.lower().endswith(
+            ".txt"
+        ):
 
             with open(
                 file_path,
@@ -1129,87 +1230,33 @@ def rag_node(state: AgentState):
         }
 
     # -----------------------------------------------------
-    # Decide document request type using AI
+    # Decide request type WITHOUT AI
     # -----------------------------------------------------
+
+    text = command.lower()
+
+    analysis_words = [
+        "summarize",
+        "summary",
+        "key points",
+        "important questions",
+        "important question",
+        "analyze",
+        "analysis",
+        "overview",
+        "complete analysis",
+        "all questions",
+        "main points"
+    ]
 
     request_type = "QUESTION"
 
-    if use_ai():
+    if any(
+        word in text
+        for word in analysis_words
+    ):
 
-        try:
-
-            analysis_type = client.responses.create(
-
-                model="gpt-5.6-luna",
-
-                input=f"""
-Understand what the user wants from the uploaded document.
-
-Choose exactly one:
-
-ANALYZE
-QUESTION
-
-ANALYZE means:
-The user wants a summary, overview, key points,
-important questions, insights, or a complete analysis
-of the document.
-
-Examples:
-"Summarize the document"
-"Give me the key points"
-"What are the important questions from this PDF?"
-"Analyze this document"
-"Give me summary, key points and important questions"
-
-QUESTION means:
-The user wants an answer to a specific question
-from the document.
-
-Examples:
-"What is PreparedStatement?"
-"Explain batch updates"
-"What does the document say about ResultSet?"
-
-USER REQUEST:
-{command}
-
-Return only ANALYZE or QUESTION.
-"""
-            )
-
-            value = (
-                analysis_type.output_text
-                .strip()
-                .upper()
-            )
-
-            if value in [
-                "ANALYZE",
-                "QUESTION"
-            ]:
-
-                request_type = value
-
-        except Exception as e:
-
-            print(
-                "Document request classification failed:",
-                e
-            )
-
-            text = command.lower()
-
-            if any(word in text for word in [
-                "summarize",
-                "summary",
-                "key points",
-                "important questions",
-                "analyze",
-                "overview"
-            ]):
-
-                request_type = "ANALYZE"
+        request_type = "ANALYZE"
 
     # -----------------------------------------------------
     # DOCUMENT ANALYSIS
@@ -1217,122 +1264,280 @@ Return only ANALYZE or QUESTION.
 
     if request_type == "ANALYZE":
 
-        try:
+        lines = [
+            line.strip()
+            for line in document_text.splitlines()
+            if line.strip()
+        ]
 
-            response = client.responses.create(
+        useful_lines = [
+            line
+            for line in lines
+            if len(line) >= 20
+        ]
 
-                model="gpt-5.6-luna",
+        if not useful_lines:
 
-                input=f"""
-You are NEXORA's document analysis assistant.
+            useful_lines = lines
 
-Analyze the uploaded document below.
+        # -------------------------------------------------
+        # Summary
+        # -------------------------------------------------
 
-DOCUMENT:
-{document_text}
+        summary_lines = useful_lines[:8]
 
-USER REQUEST:
-{command}
+        summary = " ".join(
+            summary_lines
+        )
 
-Give the result in exactly this structure:
+        if len(summary) > 1500:
 
-📄 Document Summary
+            summary = summary[:1500]
 
-Write a clear and easy-to-understand summary
-of the complete document.
-
-🔑 Key Points
-
-Give the most important points from the document.
-Use numbered points.
-
-❓ Important Questions
-
-Generate important exam/interview/study questions
-that can be answered from the document.
-Use numbered questions.
-
-Rules:
-- Base everything only on the document.
-- Do not invent information.
-- Keep the summary concise but useful.
-- Focus on the major concepts and topics.
-- Important Questions should cover the main topics.
-"""
+            last_space = summary.rfind(
+                " "
             )
 
-            answer = (
-                response.output_text
-                .strip()
+            if last_space > 0:
+
+                summary = summary[
+                    :last_space
+                ]
+
+            summary += "..."
+
+        # -------------------------------------------------
+        # Key Points
+        # -------------------------------------------------
+
+        key_points = useful_lines[:15]
+
+        # -------------------------------------------------
+        # Important Questions
+        # -------------------------------------------------
+
+        questions = []
+
+        # Existing questions from document
+
+        for line in lines:
+
+            clean_line = line.strip()
+
+            if (
+                clean_line.endswith("?")
+                and len(clean_line) > 10
+            ):
+
+                questions.append(
+                    clean_line
+                )
+
+        # Numbered questions / topics
+
+        for line in lines:
+
+            clean_line = line.strip()
+
+            if re.match(
+                r"^\d+[\.\)]\s+",
+                clean_line
+            ):
+
+                if clean_line not in questions:
+
+                    questions.append(
+                        clean_line
+                    )
+
+        # If document doesn't contain explicit questions,
+        # create study questions from topics.
+
+        if not questions:
+
+            topics = []
+
+            for line in lines:
+
+                clean_line = line.strip()
+
+                if (
+                    2 <= len(
+                        clean_line.split()
+                    ) <= 12
+                    and len(clean_line) >= 10
+                    and len(clean_line) <= 150
+                ):
+
+                    if clean_line not in topics:
+
+                        topics.append(
+                            clean_line
+                        )
+
+            for topic in topics[:15]:
+
+                questions.append(
+                    f"Explain {topic}."
+                )
+
+        result = ""
+
+        result += (
+            "📄 Document Summary\n\n"
+        )
+
+        result += summary
+
+        result += (
+            "\n\n🔑 Key Points\n\n"
+        )
+
+        for index, point in enumerate(
+            key_points,
+            1
+        ):
+
+            result += (
+                f"{index}. {point}\n"
             )
 
-            if answer:
+        result += (
+            "\n❓ Important Questions\n\n"
+        )
 
-                return {
-                    "result": answer
-                }
+        for index, question in enumerate(
+            questions[:15],
+            1
+        ):
 
-        except Exception as e:
-
-            print(
-                "Document analysis error:",
-                e
+            result += (
+                f"{index}. {question}\n"
             )
 
-            return {
-                "result": "Unable to analyze the document."
-            }
+        return {
+            "result": result
+        }
 
     # -----------------------------------------------------
     # SPECIFIC DOCUMENT QUESTION
     # -----------------------------------------------------
 
-    try:
+    question_words = re.findall(
+        r"[a-zA-Z0-9]+",
+        text
+    )
 
-        response = client.responses.create(
+    stop_words = {
+        "what",
+        "is",
+        "are",
+        "the",
+        "a",
+        "an",
+        "of",
+        "in",
+        "from",
+        "document",
+        "pdf",
+        "this",
+        "that",
+        "does",
+        "do",
+        "how",
+        "why",
+        "explain",
+        "tell",
+        "me",
+        "about",
+        "please",
+        "can",
+        "you",
+        "give",
+        "answer",
+        "my",
+        "question"
+    }
 
-            model="gpt-5.6-luna",
+    keywords = [
+        word
+        for word in question_words
+        if word not in stop_words
+        and len(word) > 2
+    ]
 
-            input=f"""
-You are NEXORA.
+    # -----------------------------------------------------
+    # Find relevant lines
+    # -----------------------------------------------------
 
-Answer the user's question using ONLY
-the uploaded document below.
+    lines = [
+        line.strip()
+        for line in document_text.splitlines()
+        if line.strip()
+    ]
 
-DOCUMENT:
-{document_text}
+    scored_lines = []
 
-USER QUESTION:
-{command}
+    for line in lines:
 
-Give a clear, direct and accurate answer.
+        lower_line = line.lower()
 
-Do not invent information that is not present
-in the document.
-"""
-        )
+        score = 0
+
+        for keyword in keywords:
+
+            if keyword in lower_line:
+
+                score += 1
+
+        if score > 0:
+
+            scored_lines.append(
+                (
+                    score,
+                    line
+                )
+            )
+
+    scored_lines.sort(
+        key=lambda item: item[0],
+        reverse=True
+    )
+
+    relevant_lines = [
+        item[1]
+        for item in scored_lines[:8]
+    ]
+
+    # -----------------------------------------------------
+    # Return specific answer
+    # -----------------------------------------------------
+
+    if relevant_lines:
 
         answer = (
-            response.output_text
-            .strip()
+            "📄 Answer from the document\n\n"
         )
 
-        if answer:
-
-            return {
-                "result": answer
-            }
-
-    except Exception as e:
-
-        print(
-            "Document question error:",
-            e
+        answer += "\n".join(
+            f"• {line}"
+            for line in relevant_lines
         )
+
+        return {
+            "result": answer
+        }
+
+    # -----------------------------------------------------
+    # No matching information
+    # -----------------------------------------------------
 
     return {
-        "result": "Unable to answer from the document."
+        "result":
+        "I could not find relevant information "
+        "for this question in the uploaded document."
     }
+
 
 # =========================================================
 # EMAIL NODE
@@ -1454,7 +1659,9 @@ MESSAGE: message text
 
         else:
 
-            message = "Hello from NEXORA."
+            message = (
+                "Hello from NEXORA."
+            )
 
     # -----------------------------------------
     # Validation
@@ -1482,8 +1689,14 @@ MESSAGE: message text
         }
 
     print("\nEmail Details:")
-    print("Recipient:", recipient)
-    print("Message:", message)
+    print(
+        "Recipient:",
+        recipient
+    )
+    print(
+        "Message:",
+        message
+    )
 
     # -----------------------------------------
     # Permission
@@ -1537,7 +1750,8 @@ MESSAGE: message text
         )
 
         return {
-            "result": f"Email could not be sent: {e}"
+            "result":
+            f"Email could not be sent: {e}"
         }
 
 
@@ -1548,7 +1762,8 @@ MESSAGE: message text
 def other_node(state: AgentState):
 
     return {
-        "result": "Unknown request. Please try another command."
+        "result":
+        "Unknown request. Please try another command."
     }
 
 
@@ -1738,7 +1953,8 @@ if __name__ == "__main__":
 
     result = app.invoke({
 
-        "command": "I want to study Java tomorrow",
+        "command":
+        "I want to study Java tomorrow",
 
         "action": "",
 

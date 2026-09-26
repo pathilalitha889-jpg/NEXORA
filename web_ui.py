@@ -6,6 +6,9 @@ import streamlit as st
 os.environ["NEXORA_UI"] = "1"
 
 try:
+    if "OPENAI_API_KEY" in st.secrets:
+       os.environ["OPENAI_API_KEY"] = st.secrets["OPENAI_API_KEY"]
+
     if "EMAIL_ADDRESS" in st.secrets:
         os.environ["EMAIL_ADDRESS"] = st.secrets["EMAIL_ADDRESS"]
 
@@ -27,30 +30,43 @@ import agent
 # GOOGLE LOGIN
 # -------------------------------------------------
 
-if not st.user.is_logged_in:
+LOCAL_MODE = os.getenv("NEXORA_LOCAL", "0") == "1"
 
-    st.markdown("## 🔐 Welcome to NEXORA")
-    st.write("Please sign in with your Google account to continue.")
+if not LOCAL_MODE:
 
-    if st.button(
-        "🔵 Continue with Google",
-        type="primary",
-        use_container_width=True
-    ):
-        st.login()
+    try:
+        logged_in = st.user.is_logged_in
+    except (AttributeError, KeyError):
+        logged_in = False
 
-    st.stop()
+    if not logged_in:
+
+        st.markdown("## 🔐 Welcome to NEXORA")
+        st.write("Please sign in with your Google account to continue.")
+
+        if st.button(
+            "🔵 Continue with Google",
+            type="primary",
+            use_container_width=True
+        ):
+            st.login()
+
+        st.stop()
 
 # Logged-in user
 with st.sidebar:
-    st.success(f"Signed in as {st.user.email}")
 
-    if st.button(
-        "Logout",
-        use_container_width=True
-    ):
-        st.logout()
+    if not LOCAL_MODE:
 
+        st.success(
+            f"Signed in as {st.user.email}"
+        )
+
+        if st.button(
+            "Logout",
+            use_container_width=True
+        ):
+            st.logout()
 st.set_page_config(
     page_title="NEXORA",
     page_icon="🤖",
