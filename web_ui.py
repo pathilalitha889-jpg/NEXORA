@@ -315,8 +315,15 @@ with st.expander("📎 Upload a document for RAG"):
 # -------------------------------------------------
 # AGENT FUNCTION
 # -------------------------------------------------
-
 def run_agent(command):
+
+    google_access_token = None
+
+    try:
+        if st.user.is_logged_in and "access" in st.user.tokens:
+            google_access_token = st.user.tokens["access"]
+    except Exception:
+        google_access_token = None
 
     result = agent.app.invoke(
         {
@@ -326,12 +333,12 @@ def run_agent(command):
             "file_path": st.session_state.get(
                 "rag_file_path"
             ),
-            "permission_granted": False
+            "permission_granted": False,
+            "google_access_token": google_access_token
         }
     )
 
     return result
-
 # -------------------------------------------------
 # RUN NEXORA
 # -------------------------------------------------
@@ -439,17 +446,20 @@ if pending_action == "SEND_EMAIL":
 
             try:
 
+
                 result = agent.app.invoke(
-                    {
-                        "command": pending_command,
-                        "action": "SEND_EMAIL",
-                        "result": "",
-                        "file_path": st.session_state.get(
-                            "rag_file_path"
-                        ),
-                        "permission_granted": True
-                    }
-                )
+    {
+        "command": command,
+        "action": "SEND_EMAIL",
+        "result": "",
+        "file_path": st.session_state.get(
+            "rag_file_path"
+        ),
+        "permission_granted": True,
+        "google_access_token": st.user.tokens["access"]
+    }
+)
+
 
                 email_response = result.get(
                     "result",
@@ -516,17 +526,19 @@ if pending_action == "MEETING":
 
             try:
 
+
                 result = agent.app.invoke(
-                    {
-                        "command": pending_command,
-                        "action": "MEETING",
-                        "result": "",
-                        "file_path": st.session_state.get(
-                            "rag_file_path"
-                        ),
-                        "permission_granted": True
-                    }
-                )
+    {
+        "command": command,
+        "action": "MEETING",
+        "result": "",
+        "file_path": st.session_state.get(
+            "rag_file_path"
+        ),
+        "permission_granted": True,
+        "google_access_token": st.user.tokens["access"]
+    }
+)
 
                 meeting_response = result.get(
                     "result",

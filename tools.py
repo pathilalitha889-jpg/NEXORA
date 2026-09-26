@@ -1,78 +1,81 @@
 import os
-import re
 import sqlite3
-import smtplib
+import base64
+import mimetypes
+
 from email.message import EmailMessage
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
+from docx import Document
 
-from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 
+# ==============================
+# CONFIGURATION
+# ==============================
+
 load_dotenv()
 
+DATABASE = "nexora.db"
 
-# =========================================================
-# SETTINGS
-# =========================================================
-
-EMAIL_ADDRESS = os.getenv("EMAIL_ADDRESS")
-EMAIL_APP_PASSWORD = os.getenv("EMAIL_APP_PASSWORD")
-
-SCOPES = [
+GOOGLE_SCOPES = [
+    "https://www.googleapis.com/auth/gmail.send",
     "https://www.googleapis.com/auth/calendar.events"
 ]
 
 
-# =========================================================
-# DATABASE
-# =========================================================
+# ==============================
+# DATABASE SETUP
+# ==============================
 
 def get_connection():
 
-    conn = sqlite3.connect("nexora.db")
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            task TEXT
-        )
-    """)
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS meetings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            person TEXT,
-            date TEXT,
-            time TEXT
-        )
-    """)
-
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS memories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            information TEXT
-        )
-    """)
-
-    conn.commit()
-
-    return conn
+    return sqlite3.connect(DATABASE)
 
 
-# =========================================================
+conn = get_connection()
+cursor = conn.cursor()
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS meetings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    person TEXT,
+    date TEXT,
+    time TEXT
+)
+""")
+
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    information TEXT
+)
+""")
+
+conn.commit()
+conn.close()
+
+
+# ==============================
 # TASKS
-# =========================================================
+# ==============================
 
 def add_task(task):
 
     conn = get_connection()
+    cursor = conn.cursor()
 
-    conn.execute(
+    cursor.execute(
         "INSERT INTO tasks (task) VALUES (?)",
         (task,)
     )
@@ -86,7 +89,6 @@ def add_task(task):
 def get_tasks():
 
     conn = get_connection()
-
     cursor = conn.cursor()
 
     cursor.execute(
@@ -100,15 +102,16 @@ def get_tasks():
     return tasks
 
 
-# =========================================================
+# ==============================
 # MEETINGS
-# =========================================================
+# ==============================
 
 def save_meeting(person, date, time):
 
     conn = get_connection()
+    cursor = conn.cursor()
 
-    conn.execute(
+    cursor.execute(
         """
         INSERT INTO meetings (person, date, time)
         VALUES (?, ?, ?)
@@ -125,7 +128,6 @@ def save_meeting(person, date, time):
 def get_meetings():
 
     conn = get_connection()
-
     cursor = conn.cursor()
 
     cursor.execute(
@@ -139,228 +141,230 @@ def get_meetings():
     return meetings
 
 
-# =========================================================
-# GOOGLE CALENDAR
-# =========================================================
+# ==============================
+# GOOGLE AUTHENTICATION
+# ==============================
 
-def get_calendar_service():
+def get_google_credentials(access_token):
 
-    creds = None
-
-    if os.path.exists("token.json"):
-
-        creds = Credentials.from_authorized_user_file(
-            "token.json",
-            SCOPES
+    if not access_token:
+        raise ValueError(
+            "Google access token is missing. Please login with Google again."
         )
 
-    if not creds or not creds.valid:
-
-        if creds and creds.expired and creds.refresh_token:
-
-            creds.refresh(Request())
-
-        else:
-
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json",
-                SCOPES
-            )
-
-            creds = flow.run_local_server(
-                port=0
-            )
-
-        with open(
-            "token.json",
-            "w"
-        ) as token:
-
-            token.write(
-                creds.to_json()
-            )
-
-    return build(
-        "calendar",
-        "v3",
-        credentials=creds
+    credentials = Credentials(
+        token=access_token,
+        scopes=GOOGLE_SCOPES
     )
 
+    return credentials
 
-def create_calendar_event(person, date, time):
 
-    service = get_calendar_service()
+# ==============================
+# GOOGLE CALENDAR
+# ==============================
+
+def create_calendar_event(
+    person,
+    date,
+    time,
+    access_token=None
+):
+
+    credentials = get_google_credentials(
+        access_token
+    )
+
+    service = build(
+        "calendar",
+        "v3",
+        credentials=credentials
+    )
+
+    start_datetime = datetime.strptime(
+        f"{date} {time}",
+        "%Y-%m-%d %H:%M"
+    )
+
+    end_datetime = (
+        start_datetime
+        + timedelta(minutes=30)
+    )
+
+    timezone = "Asia/Kolkata"
+
+    start_time = (
+        start_datetime.isoformat()
+        + "+05:30"
+    )
+
+    end_time = (
+        end_datetime.isoformat()
+        + "+05:30"
+    )
 
     event = {
 
-        "summary":
-            f"Meeting with {person}",
+        "summary": f"Meeting with {person}",
 
-        "description":
-            "Meeting scheduled by NEXORA AI Agent",
+        "description": (
+            "Meeting scheduled by NEXORA "
+            "Intelligent Multi-Tool AI Agent."
+        ),
 
         "start": {
-
-            "dateTime":
-                f"{date}T{time}:00+05:30",
-
-            "timeZone":
-                "Asia/Kolkata"
+            "dateTime": start_time,
+            "timeZone": timezone
         },
 
         "end": {
+            "dateTime": end_time,
+            "timeZone": timezone
+        },
 
-            "dateTime":
-                f"{date}T{time}:00+05:30",
-
-            "timeZone":
-                "Asia/Kolkata"
+        "reminders": {
+            "useDefault": False,
+            "overrides": [
+                {
+                    "method": "popup",
+                    "minutes": 10
+                },
+                {
+                    "method": "email",
+                    "minutes": 1440
+                }
+            ]
         }
     }
 
     created_event = service.events().insert(
-
         calendarId="primary",
-
         body=event
-
     ).execute()
 
     return created_event.get(
-        "htmlLink"
+        "htmlLink",
+        "Calendar event created successfully!"
     )
 
 
-# Keep old function name also working
-def schedule_meeting(person, date, time):
+# Keep compatibility with older code
+def schedule_meeting(
+    person,
+    date,
+    time,
+    access_token=None
+):
 
     return create_calendar_event(
         person,
         date,
-        time
+        time,
+        access_token
     )
 
 
-# =========================================================
-# EMAIL
-# =========================================================
+# ==============================
+# GMAIL
+# ==============================
 
 def send_email(
     recipient,
     message,
-    attachment_path=None
+    attachment_path=None,
+    access_token=None
 ):
 
-    if not EMAIL_ADDRESS:
-        raise ValueError(
-            "EMAIL_ADDRESS is missing in .env"
-        )
+    credentials = get_google_credentials(
+        access_token
+    )
 
-    if not EMAIL_APP_PASSWORD:
-        raise ValueError(
-            "EMAIL_APP_PASSWORD is missing in .env"
-        )
+    service = build(
+        "gmail",
+        "v1",
+        credentials=credentials
+    )
 
     email = EmailMessage()
 
-    email["From"] = EMAIL_ADDRESS
     email["To"] = recipient
     email["Subject"] = "Message from NEXORA"
 
     email.set_content(message)
 
-    # -----------------------------------------------------
-    # ATTACHMENT
-    # -----------------------------------------------------
-
+    # Optional attachment
     if attachment_path:
 
-        if not os.path.exists(
-            attachment_path
-        ):
+        if os.path.exists(attachment_path):
 
-            raise FileNotFoundError(
-                f"Attachment not found: {attachment_path}"
+            mime_type, _ = mimetypes.guess_type(
+                attachment_path
             )
 
-        with open(
-            attachment_path,
-            "rb"
-        ) as file:
+            if mime_type:
 
-            file_data = file.read()
+                main_type, sub_type = (
+                    mime_type.split("/", 1)
+                )
 
-        file_name = os.path.basename(
-            attachment_path
-        )
+            else:
 
-        import mimetypes
+                main_type = "application"
+                sub_type = "octet-stream"
 
-        mime_type, _ = mimetypes.guess_type(
-            file_name
-        )
+            with open(
+                attachment_path,
+                "rb"
+            ) as file:
 
-        if mime_type:
+                file_data = file.read()
 
-            main_type, sub_type = mime_type.split(
-                "/",
-                1
+            filename = os.path.basename(
+                attachment_path
             )
 
-        else:
+            email.add_attachment(
+                file_data,
+                maintype=main_type,
+                subtype=sub_type,
+                filename=filename
+            )
 
-            main_type = "application"
-            sub_type = "octet-stream"
+    encoded_message = base64.urlsafe_b64encode(
+        email.as_bytes()
+    ).decode()
 
-        email.add_attachment(
+    body = {
+        "raw": encoded_message
+    }
 
-            file_data,
-
-            maintype=main_type,
-
-            subtype=sub_type,
-
-            filename=file_name
+    sent_message = (
+        service.users()
+        .messages()
+        .send(
+            userId="me",
+            body=body
         )
+        .execute()
+    )
 
-    # -----------------------------------------------------
-    # SEND
-    # -----------------------------------------------------
+    if sent_message.get("id"):
 
-    with smtplib.SMTP_SSL(
-        "smtp.gmail.com",
-        465
-    ) as server:
+        return "Email sent successfully!"
 
-        server.login(
-            EMAIL_ADDRESS,
-            EMAIL_APP_PASSWORD
-        )
-
-        server.send_message(
-            email
-        )
-
-    if attachment_path:
-
-        return (
-            "Email sent successfully "
-            f"with attachment: "
-            f"{os.path.basename(attachment_path)}"
-        )
-
-    return "Email sent successfully!"
+    return "Unable to send email."
 
 
-# =========================================================
+# ==============================
 # MEMORY
-# =========================================================
+# ==============================
 
 def save_memory(information):
 
     conn = get_connection()
+    cursor = conn.cursor()
 
-    conn.execute(
+    cursor.execute(
         """
         INSERT INTO memories (information)
         VALUES (?)
@@ -371,833 +375,109 @@ def save_memory(information):
     conn.commit()
     conn.close()
 
-    return "Memory saved successfully!"
+    return "Memory saved!"
 
 
 def get_memories():
 
     conn = get_connection()
-
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT information FROM memories"
+        "SELECT * FROM memories"
     )
 
     memories = cursor.fetchall()
 
     conn.close()
 
-    return [
-        memory[0]
-        for memory in memories
-    ]
+    return memories
 
 
-# =========================================================
-# DOCUMENT READER
-# =========================================================
+# ==============================
+# RAG DOCUMENT
+# ==============================
 
-def read_document(file_path):
+def read_document():
 
-    if not file_path:
+    document = Document(
+        "questions.docx"
+    )
 
-        return {
-            "text": "",
-            "pages": 0,
-            "type": "unknown"
-        }
+    text = ""
 
-    if not os.path.exists(
-        file_path
-    ):
+    for paragraph in document.paragraphs:
 
-        return {
-            "text": "",
-            "pages": 0,
-            "type": "not_found"
-        }
+        if paragraph.text.strip():
 
-    extension = os.path.splitext(
-        file_path
-    )[1].lower()
+            text += (
+                paragraph.text
+                + "\n"
+            )
 
-    # -----------------------------------------------------
-    # PDF
-    # -----------------------------------------------------
+    for table in document.tables:
 
-    if extension == ".pdf":
+        for row in table.rows:
 
-        from pypdf import PdfReader
+            for cell in row.cells:
 
-        reader = PdfReader(
-            file_path
-        )
+                if cell.text.strip():
 
-        pages = []
-
-        for page_number, page in enumerate(
-            reader.pages,
-            start=1
-        ):
-
-            page_text = page.extract_text()
-
-            if page_text:
-
-                pages.append(
-                    (
-                        page_number,
-                        page_text.strip()
+                    text += (
+                        cell.text
+                        + "\n"
                     )
-                )
 
-        text = "\n".join(
-            page[1]
-            for page in pages
+    return text
+
+
+def search_document(question):
+
+    document_text = read_document()
+
+    question_words = (
+        question.lower()
+        .replace("?", "")
+        .replace(".", "")
+        .replace(",", "")
+        .split()
+    )
+
+    words = set(
+        question_words
+    )
+
+    best_score = 0
+    best_text = ""
+
+    paragraphs = (
+        document_text.split("\n")
+    )
+
+    for paragraph in paragraphs:
+
+        paragraph_lower = (
+            paragraph.lower()
         )
 
-        return {
-            "text": text,
-            "pages": len(reader.pages),
-            "type": "PDF",
-            "page_data": pages
-        }
+        score = 0
 
-    # -----------------------------------------------------
-    # DOCX
-    # -----------------------------------------------------
+        for word in words:
 
-    if extension == ".docx":
+            if (
+                len(word) > 2
+                and word in paragraph_lower
+            ):
 
-        from docx import Document
+                score += 1
 
-        document = Document(
-            file_path
-        )
+        if score > best_score:
 
-        paragraphs = []
+            best_score = score
+            best_text = paragraph
 
-        for paragraph in document.paragraphs:
+    if best_score == 0:
 
-            value = paragraph.text.strip()
+        return document_text
 
-            if value:
-
-                paragraphs.append(
-                    value
-                )
-
-        for table in document.tables:
-
-            for row in table.rows:
-
-                for cell in row.cells:
-
-                    value = cell.text.strip()
-
-                    if value:
-
-                        paragraphs.append(
-                            value
-                        )
-
-        text = "\n".join(
-            paragraphs
-        )
-
-        return {
-            "text": text,
-            "pages": 0,
-            "type": "DOCX",
-            "page_data": []
-        }
-
-    # -----------------------------------------------------
-    # TXT
-    # -----------------------------------------------------
-
-    if extension == ".txt":
-
-        with open(
-            file_path,
-            "r",
-            encoding="utf-8"
-        ) as file:
-
-            text = file.read()
-
-        return {
-            "text": text,
-            "pages": 0,
-            "type": "TXT",
-            "page_data": []
-        }
-
-    return {
-        "text": "",
-        "pages": 0,
-        "type": "unsupported"
-    }
-
-
-# =========================================================
-# DOCUMENT SECTIONS
-# =========================================================
-
-def create_sections(text):
-
-    lines = [
-
-        line.strip()
-
-        for line in text.splitlines()
-
-        if line.strip()
-    ]
-
-    sections = []
-
-    current = ""
-
-    for line in lines:
-
-        is_heading = bool(
-            re.match(
-                r"^(chapter|section|unit|topic|question|write|explain|describe|define|what|how|list|program)\b",
-                line,
-                re.IGNORECASE
-            )
-        )
-
-        if is_heading:
-
-            if current:
-
-                sections.append(
-                    current.strip()
-                )
-
-            current = line
-
-        else:
-
-            if current:
-
-                current += " " + line
-
-            else:
-
-                current = line
-
-    if current:
-
-        sections.append(
-            current.strip()
-        )
-
-    if not sections:
-
-        sections = [
-            text[i:i + 1000]
-
-            for i in range(
-                0,
-                len(text),
-                1000
-            )
-        ]
-
-    return sections
-
-
-# =========================================================
-# DOCUMENT SEARCH
-# =========================================================
-
-def search_document(
-    question,
-    file_path=None
-):
-
-    document = read_document(
-        file_path
-    )
-
-    text = document["text"]
-
-    if not text:
-
-        return {
-            "found": False,
-            "message":
-                "No readable information found."
-        }
-
-    sections = create_sections(
-        text
-    )
-
-    stop_words = {
-
-        "the", "a", "an",
-        "is", "are", "was",
-        "were", "to", "of",
-        "in", "on", "for",
-        "and", "or", "with",
-        "using", "write",
-        "program", "how",
-        "what", "explain",
-        "give", "me",
-        "please", "from",
-        "this", "that"
-    }
-
-    question_words = set(
-
-        re.findall(
-            r"\b[a-zA-Z0-9]+\b",
-            question.lower()
-        )
-    )
-
-    question_words -= stop_words
-
-    results = []
-
-    for section in sections:
-
-        section_words = set(
-
-            re.findall(
-                r"\b[a-zA-Z0-9]+\b",
-                section.lower()
-            )
-        )
-
-        common_words = (
-            question_words
-            & section_words
-        )
-
-        score = len(
-            common_words
-        )
-
-        if score > 0:
-
-            results.append(
-                (
-                    score,
-                    section
-                )
-            )
-
-    results.sort(
-        key=lambda x: x[0],
-        reverse=True
-    )
-
-    if not results:
-
-        return {
-            "found": False,
-            "message":
-                "No relevant information found."
-        }
-
-    best_score, best_section = results[0]
-
-    related = [
-        section
-        for score, section in results[1:4]
-    ]
-
-    return {
-
-        "found": True,
-
-        "best_match":
-            best_section,
-
-        "score":
-            best_score,
-
-        "related":
-            related
-    }
-
-
-# =========================================================
-# DOCUMENT SUMMARY
-# =========================================================
-
-def create_summary(text):
-
-    sentences = re.split(
-        r"(?<=[.!?])\s+",
-        text
-    )
-
-    sentences = [
-        sentence.strip()
-        for sentence in sentences
-        if len(sentence.strip()) > 30
-    ]
-
-    if not sentences:
-
-        return (
-            text[:500]
-            if text
-            else "No summary available."
-        )
-
-    # Select important sentences using
-    # keyword frequency.
-
-    words = re.findall(
-        r"\b[a-zA-Z]{4,}\b",
-        text.lower()
-    )
-
-    frequency = {}
-
-    for word in words:
-
-        frequency[word] = (
-            frequency.get(word, 0) + 1
-        )
-
-    scored = []
-
-    for sentence in sentences:
-
-        sentence_words = re.findall(
-            r"\b[a-zA-Z]{4,}\b",
-            sentence.lower()
-        )
-
-        score = sum(
-            frequency.get(word, 0)
-            for word in sentence_words
-        )
-
-        scored.append(
-            (
-                score,
-                sentence
-            )
-        )
-
-    scored.sort(
-        key=lambda x: x[0],
-        reverse=True
-    )
-
-    selected = [
-        sentence
-        for _, sentence in scored[:5]
-    ]
-
-    return " ".join(
-        selected
-    )
-
-
-# =========================================================
-# KEY TOPICS
-# =========================================================
-
-def extract_topics(text):
-
-    words = re.findall(
-        r"\b[a-zA-Z]{4,}\b",
-        text.lower()
-    )
-
-    stop_words = {
-
-        "this", "that",
-        "these", "those",
-        "there", "their",
-        "which", "where",
-        "about", "would",
-        "could", "should",
-        "have", "has",
-        "been", "were",
-        "from", "with",
-        "into", "using",
-        "than", "then",
-        "also", "more",
-        "some", "such",
-        "when", "what",
-        "will", "your",
-        "they", "them",
-        "only", "each"
-    }
-
-    frequency = {}
-
-    for word in words:
-
-        if word in stop_words:
-            continue
-
-        frequency[word] = (
-            frequency.get(word, 0) + 1
-        )
-
-    topics = sorted(
-        frequency.items(),
-        key=lambda x: x[1],
-        reverse=True
-    )
-
-    return [
-        word
-        for word, count in topics[:10]
-    ]
-
-
-# =========================================================
-# KEY INSIGHTS
-# =========================================================
-
-def extract_insights(text):
-
-    sentences = re.split(
-        r"(?<=[.!?])\s+",
-        text
-    )
-
-    insights = []
-
-    keywords = [
-
-        "important",
-        "key",
-        "main",
-        "advantage",
-        "disadvantage",
-        "benefit",
-        "limitation",
-        "used",
-        "allows",
-        "provides",
-        "supports",
-        "required",
-        "must"
-    ]
-
-    for sentence in sentences:
-
-        sentence = sentence.strip()
-
-        if len(sentence) < 30:
-            continue
-
-        lower = sentence.lower()
-
-        if any(
-            keyword in lower
-            for keyword in keywords
-        ):
-
-            insights.append(
-                sentence
-            )
-
-        if len(insights) >= 5:
-            break
-
-    if not insights:
-
-        insights = [
-            sentence.strip()
-            for sentence in sentences
-            if len(sentence.strip()) > 40
-        ][:5]
-
-    return insights
-
-
-# =========================================================
-# POSSIBLE QUESTIONS
-# =========================================================
-
-def generate_questions(
-    text,
-    sections
-):
-
-    questions = []
-
-    for section in sections:
-
-        clean = section.strip()
-
-        if len(clean) < 20:
-            continue
-
-        first_line = clean.split(
-            "."
-        )[0].strip()
-
-        if len(first_line) > 15:
-
-            questions.append(
-                f"What is {first_line}?"
-            )
-
-        if len(questions) >= 5:
-            break
-
-    # Remove duplicates
-
-    unique = []
-
-    for question in questions:
-
-        if question not in unique:
-
-            unique.append(
-                question
-            )
-
-    return unique[:5]
-
-
-# =========================================================
-# SMART DOCUMENT ANALYSIS
-# =========================================================
-
-def analyze_document(
-    file_path
-):
-
-    document = read_document(
-        file_path
-    )
-
-    text = document["text"]
-
-    if not text:
-
-        return {
-            "error":
-                "Unable to read the uploaded document."
-        }
-
-    words = re.findall(
-        r"\b[\w'-]+\b",
-        text
-    )
-
-    sections = create_sections(
-        text
-    )
-
-    summary = create_summary(
-        text
-    )
-
-    topics = extract_topics(
-        text
-    )
-
-    insights = extract_insights(
-        text
-    )
-
-    questions = generate_questions(
-        text,
-        sections
-    )
-
-    file_name = os.path.basename(
-        file_path
-    )
-
-    result = []
-
-    result.append(
-        "📄 Document Analysis"
-    )
-
-    result.append(
-        f"\nFile: {file_name}"
-    )
-
-    result.append(
-        f"Type: {document['type']}"
-    )
-
-    if document["pages"]:
-
-        result.append(
-            f"Pages: {document['pages']}"
-        )
-
-    result.append(
-        f"Words: {len(words)}"
-    )
-
-    result.append(
-        f"Sections: {len(sections)}"
-    )
-
-    result.append(
-        "\n📝 Summary\n"
-        + summary
-    )
-
-    result.append(
-        "\n🔑 Key Topics"
-    )
-
-    for topic in topics:
-
-        result.append(
-            f"• {topic}"
-        )
-
-    result.append(
-        "\n💡 Key Insights"
-    )
-
-    for insight in insights:
-
-        result.append(
-            f"• {insight}"
-        )
-
-    result.append(
-        "\n❓ Possible Questions"
-    )
-
-    for question in questions:
-
-        result.append(
-            f"• {question}"
-        )
-
-    return "\n".join(
-        result
-    )
-
-
-# =========================================================
-# RAG / DOCUMENT QUERY
-# =========================================================
-
-def ask_document(
-    question,
-    file_path=None
-):
-
-    if not file_path:
-
-        return (
-            "Please upload a PDF, DOCX or TXT "
-            "file first."
-        )
-
-    if not os.path.exists(
-        file_path
-    ):
-
-        return "Document not found."
-
-    # -----------------------------------------------------
-    # SMART ANALYSIS REQUEST
-    # -----------------------------------------------------
-
-    analysis_words = [
-
-        "summarize",
-        "summary",
-        "analyze",
-        "analysis",
-        "overview",
-        "key points",
-        "important points",
-        "topics",
-        "insights",
-        "questions",
-        "what is this document"
-    ]
-
-    question_lower = question.lower()
-
-    if any(
-        word in question_lower
-        for word in analysis_words
-    ):
-
-        return analyze_document(
-            file_path
-        )
-
-    # -----------------------------------------------------
-    # NORMAL DOCUMENT SEARCH
-    # -----------------------------------------------------
-
-    result = search_document(
-        question,
-        file_path
-    )
-
-    if not result.get(
-        "found"
-    ):
-
-        return (
-            "No relevant information "
-            "found in the document."
-        )
-
-    output = []
-
-    output.append(
-        "📚 Relevant Information"
-    )
-
-    output.append(
-        f"\n{result['best_match']}"
-    )
-
-    output.append(
-        "\n🔗 Related Sections"
-    )
-
-    if result["related"]:
-
-        for section in result["related"]:
-
-            output.append(
-                f"• {section}"
-            )
-
-    else:
-
-        output.append(
-            "• No related sections found."
-        )
-
-    return "\n".join(
-        output
-    )
-
-
-# =========================================================
-# OLD COMPATIBILITY FUNCTION
-# =========================================================
-
-def read_document_text(file_path):
-
-    document = read_document(
-        file_path
-    )
-
-    return document["text"]
+    return best_text

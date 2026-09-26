@@ -1,17 +1,17 @@
+
 import os
-import re
-from datetime import datetime, timedelta
-from typing import TypedDict
+from datetime import datetime
+from typing import TypedDict, Optional
 
 from dotenv import load_dotenv
 from openai import OpenAI
-import tools
-
 from langgraph.graph import StateGraph, START, END
+
+import tools
 
 
 # =========================================================
-# SETUP
+# CONFIGURATION
 # =========================================================
 
 load_dotenv()
@@ -21,176 +21,120 @@ try:
 except Exception:
     client = None
 
+
 # =========================================================
-# STATE
+# AGENT STATE
 # =========================================================
 
-class AgentState(TypedDict):
+class AgentState(TypedDict, total=False):
     command: str
     action: str
     result: str
-    file_path: str
+    file_path: Optional[str]
     permission_granted: bool
+    google_access_token: Optional[str]
 
 
 # =========================================================
-# PERMISSION
+# HELPERS
 # =========================================================
 
-def ask_permission(
-    action,
-    permission_granted=False
-):
-
-    # Browser Allow already clicked
-    if permission_granted:
-        return True
-
-    print(
-        f"\nPermission required for: {action}"
-    )
-
-    # Streamlit UI
-    if os.getenv("NEXORA_UI") == "1":
-        return False
-
-    # Terminal
-    choice = input(
-        "Do you want to allow this action? (yes/no): "
-    )
-
-    return choice.lower().strip() == "yes"
+def use_ai() -> bool:
+    return client is not None
 
 
-# =========================================================
-# LOCAL CLASSIFICATION
-# =========================================================
-
-def local_classify(command):
+def local_classify(command: str) -> str:
 
     text = command.lower().strip()
 
-    # EMAIL
-    if (
-        ("send" in text and
-         ("email" in text or "mail" in text))
-        or "email" in text
-        or "mail" in text
-    ):
-        return "SEND_EMAIL"
-
-    # MEETING
-    if (
-        "schedule" in text
-        or "book a meeting" in text
-        or "create a meeting" in text
-        or "meeting with" in text
-    ):
+    if any(word in text for word in [
+        "schedule", "meeting", "appointment", "book a meeting"
+    ]):
         return "MEETING"
 
-    # SHOW MEETING
-    if (
-        "show my meeting" in text
-        or "show meetings" in text
-        or "list meetings" in text
-        or "my meetings" in text
-        or "what meetings" in text
-    ):
-        return "SHOW_MEETING"
+    if any(word in text for word in [
+        "add a task", "add task", "create a task", "new task",
+        "remind me to"
+    ]):
+        return "ADD_TASK"
 
-    # SHOW TASK
-    if (
-        "show my task" in text
-        or "show tasks" in text
-        or "list tasks" in text
-        or "my tasks" in text
-        or "what are my tasks" in text
-    ):
+    if any(word in text for word in [
+        "show my tasks", "show tasks", "list my tasks",
+        "what are my tasks"
+    ]):
         return "SHOW_TASK"
 
-    # MEMORY
-    memory_phrases = [
-        "remember this",
-        "remember that",
-        "remember:",
-        "save this",
-        "save that",
-        "store this",
-        "store that",
-        "do you remember",
-        "what do you remember",
-        "what did i tell you",
-        "what did i say",
-        "show my memory",
-        "show memories",
-        "my memories",
-        "retrieve memory",
-        "retrieve memories",
-        "recall"
-    ]
+    if any(word in text for word in [
+        "show my meetings", "show meetings", "list my meetings",
+        "what meetings do i have"
+    ]):
+        return "SHOW_MEETING"
 
-    if any(
-        phrase in text
-        for phrase in memory_phrases
-    ):
+    if any(word in text for word in [
+        "send an email", "send email", "email",
+        "mail"
+    ]):
+        return "SEND_EMAIL"
+
+    if any(word in text for word in [
+        "remember", "do you remember", "what do you remember",
+        "save this memory"
+    ]):
         return "MEMORY"
 
-    # RAG / DOCUMENT
-    rag_words = [
-        "pdf",
-        "document",
-        "uploaded file",
-        "uploaded document",
-        "docx",
-        "txt",
-        "summarize",
-        "summary",
-        "analyze document",
-        "analyze this document",
-        "key topics",
-        "key insights",
-        "possible questions",
-        "relevant information",
-        "search document",
-        "what does the document say",
-        "what is this document about",
-        "jdbc",
-        "preparedstatement",
-        "resultset",
-        "batch update",
-        "batch updates",
-        "database connection"
-    ]
-
-    if any(
-        word in text
-        for word in rag_words
-    ):
+    if any(word in text for word in [
+        "document", "pdf", "docx", "jdbc", "rag",
+        "uploaded file"
+    ]):
         return "RAG"
-
-    # ADD TASK
-    if (
-        "add task" in text
-        or "add a task" in text
-        or "create task" in text
-        or "create a task" in text
-        or "new task" in text
-        or "remind me" in text
-    ):
-        return "ADD_TASK"
 
     return "OTHER"
 
 
+def ask_permission(action: str, state: AgentState) -> bool:
+
+    # Web UI explicitly grants permission
+    if state.get("permission_granted", False):
+        return True
+
+    # Terminal mode
+    if os.getenv("NEXORA_UI") != "1":
+
+        print(f"\nPermission required for: {action}")
+
+        choice = input(
+            "Do you want to allow this action? (yes/no): "
+        )
+
+        return choice.lower().strip() == "yes"
+
+    return False
+
+
 # =========================================================
-# AI CLASSIFICATION
+# ANALYZE REQUEST
 # =========================================================
 
-def analyze_request(state):
+def analyze_request(state: AgentState):
 
-    print("\nAnalyzing request...")
+    command = state.get("command", "").strip()
 
-    command = state["command"]
+    if not command:
+        return {
+            "action": "OTHER",
+            "result": "Please enter a command."
+        }
+
+    # Local fallback when OpenAI is unavailable
+    if not use_ai():
+
+        action = local_classify(command)
+
+        print("Local classification:", action)
+
+        return {
+            "action": action
+        }
 
     try:
 
@@ -199,12 +143,11 @@ def analyze_request(state):
             model="gpt-5.6-luna",
 
             input=f"""
-You are NEXORA, an intelligent multi-tool AI agent.
+You are the AI brain of NEXORA.
 
-User request:
-{command}
+Understand the user's request and classify it into exactly ONE action.
 
-Classify the request as exactly one:
+Possible actions:
 
 MEETING
 ADD_TASK
@@ -217,31 +160,25 @@ OTHER
 
 Rules:
 
-MEETING = schedule or book a meeting.
+Schedule/create/book a meeting -> MEETING
+Add/create a task -> ADD_TASK
+Show/list tasks -> SHOW_TASK
+Show/list meetings -> SHOW_MEETING
+Send/write an email -> SEND_EMAIL
+Remember/store/recall information -> MEMORY
+Questions about an uploaded document -> RAG
+Anything else -> OTHER
 
-ADD_TASK = add a new task.
+User request:
+{command}
 
-SHOW_MEETING = show saved meetings.
-
-SHOW_TASK = show saved tasks.
-
-SEND_EMAIL = send an email.
-
-MEMORY = save or retrieve memories.
-
-RAG = work with an uploaded PDF, DOCX or TXT document,
-including searching, summarizing, analyzing, extracting
-topics, insights or questions.
-
-OTHER = anything else.
-
-Return only the classification word.
+Return ONLY the action name.
 """
         )
 
         action = response.output_text.strip().upper()
 
-        allowed = {
+        valid_actions = {
             "MEETING",
             "ADD_TASK",
             "SHOW_MEETING",
@@ -252,151 +189,133 @@ Return only the classification word.
             "OTHER"
         }
 
-        if action not in allowed:
-            raise ValueError(
-                "Invalid AI classification"
-            )
+        if action not in valid_actions:
+            action = local_classify(command)
 
-        print(
-            "AI selected:",
-            action
-        )
+        print("AI selected:", action)
 
         return {
             "action": action
         }
 
-    except Exception:
+    except Exception as e:
 
-        print(
-            "⚠️ OpenAI unavailable. "
-            "Using local fallback..."
-        )
+        print("AI analysis failed:", e)
 
-        action = local_classify(
-            command
-        )
+        action = local_classify(command)
 
-        print(
-            "Local fallback understood:",
-            action
-        )
+        print("Local fallback:", action)
 
         return {
             "action": action
         }
-
-
-# =========================================================
-# MEETING EXTRACTION
-# =========================================================
-
-def extract_meeting_locally(command):
-
-    text = command.lower()
-
-    person = "Unknown"
-
-    match = re.search(
-        r"(?:with|for)\s+([a-zA-Z]+)",
-        text
-    )
-
-    if match:
-
-        person = match.group(1).strip()
-
-        person = person.capitalize()
-
-    today = datetime.now().date()
-
-    if "today" in text:
-
-        date = today
-
-    elif "tomorrow" in text:
-
-        date = today + timedelta(days=1)
-
-    else:
-
-        match = re.search(
-            r"\b(20\d{2}-\d{2}-\d{2})\b",
-            text
-        )
-
-        if match:
-
-            date = datetime.strptime(
-                match.group(1),
-                "%Y-%m-%d"
-            ).date()
-
-        else:
-
-            date = today + timedelta(days=1)
-
-    time = "10:00"
-
-    match = re.search(
-        r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b",
-        text
-    )
-
-    if match:
-
-        hour = int(match.group(1))
-
-        minute = (
-            int(match.group(2))
-            if match.group(2)
-            else 0
-        )
-
-        period = match.group(3)
-
-        if period == "pm" and hour != 12:
-            hour += 12
-
-        if period == "am" and hour == 12:
-            hour = 0
-
-        time = f"{hour:02d}:{minute:02d}"
-
-    return (
-        person,
-        date.strftime("%Y-%m-%d"),
-        time
-    )
 
 
 # =========================================================
 # MEETING NODE
 # =========================================================
 
-def meeting_node(state):
+def meeting_node(state: AgentState):
 
-    print(
-        "Meeting tool selected."
-    )
+    command = state.get("command", "").strip()
 
-    command = state["command"]
+    person = ""
+    date = ""
+    time = ""
 
-    person, date, time = (
-        extract_meeting_locally(command)
-    )
+    # -----------------------------------------
+    # AI extraction
+    # -----------------------------------------
+
+    if use_ai():
+
+        try:
+
+            details = client.responses.create(
+
+                model="gpt-5.6-luna",
+
+                input=f"""
+Today is {datetime.now().strftime('%Y-%m-%d')}.
+
+Extract the meeting details from this request:
+
+{command}
+
+Convert relative dates such as tomorrow, today and next Monday
+into YYYY-MM-DD.
+
+Convert time into 24-hour HH:MM format.
+
+Return exactly:
+
+PERSON: name
+DATE: YYYY-MM-DD
+TIME: HH:MM
+"""
+            )
+
+            lines = details.output_text.strip().splitlines()
+
+            for line in lines:
+
+                upper_line = line.upper()
+
+                if upper_line.startswith("PERSON:"):
+                    person = line.split(":", 1)[1].strip()
+
+                elif upper_line.startswith("DATE:"):
+                    date = line.split(":", 1)[1].strip()
+
+                elif upper_line.startswith("TIME:"):
+                    time = line.split(":", 1)[1].strip()
+
+        except Exception as e:
+
+            print("Meeting AI extraction failed:", e)
+
+    # -----------------------------------------
+    # Basic local fallback extraction
+    # -----------------------------------------
+
+    if not person:
+
+        words = command.split()
+
+        if "with" in [w.lower() for w in words]:
+
+            try:
+                index = [
+                    w.lower() for w in words
+                ].index("with")
+
+                if index + 1 < len(words):
+                    person = words[index + 1]
+
+            except Exception:
+                pass
+
+    if not person:
+        person = "Unknown"
+
+    if not date:
+        date = datetime.now().strftime("%Y-%m-%d")
+
+    if not time:
+        time = "10:00"
 
     print("\nMeeting Details:")
     print("Person:", person)
     print("Date:", date)
     print("Time:", time)
 
+    # -----------------------------------------
+    # Permission
+    # -----------------------------------------
+
     allowed = ask_permission(
         f"Create a Google Calendar meeting with {person}",
-        state.get(
-            "permission_granted",
-            False
-        )
+        state
     )
 
     if not allowed:
@@ -404,186 +323,134 @@ def meeting_node(state):
         if os.getenv("NEXORA_UI") == "1":
 
             return {
-                "result":
-                    "PERMISSION_REQUIRED"
+                "result": "PERMISSION_REQUIRED"
             }
 
         return {
-            "result":
-                "Meeting cancelled by user."
+            "result": "Meeting cancelled by user."
         }
 
-    print(
-        "Permission granted."
-    )
+    print("Permission granted.")
 
-    tools.save_meeting(
-        person,
-        date,
-        time
-    )
+    try:
 
-    link = tools.create_calendar_event(
-        person,
-        date,
-        time
-    )
-
-    print(
-        "\nGoogle Calendar Event Created!"
-    )
-
-    print(
-        "Calendar Link:",
-        link
-    )
-
-    return {
-        "result":
-            f"Meeting created successfully!\n{link}"
-    }
-
-
-# =========================================================
-# TASK EXTRACTION
-# =========================================================
-
-def extract_task_locally(command):
-
-    text = command.strip()
-
-    patterns = [
-
-        r"add (?:a )?task (?:to )?(.*)",
-
-        r"create (?:a )?task (?:to )?(.*)",
-
-        r"new task[: ]+(.*)",
-
-        r"remind me to (.*)"
-    ]
-
-    for pattern in patterns:
-
-        match = re.search(
-            pattern,
-            text,
-            re.IGNORECASE
+        tools.save_meeting(
+            person,
+            date,
+            time
         )
 
-        if match:
+        link = tools.create_calendar_event(
+            person,
+            date,
+            time,
+            state.get("google_access_token")
+        )
 
-            task = match.group(1).strip()
+        print("\nGoogle Calendar Event Created!")
+        print("Calendar Link:", link)
 
-            if task:
-                return task
+        return {
+            "result": link
+        }
 
-    return text
+    except Exception as e:
+
+        print("Calendar error:", e)
+
+        return {
+            "result": f"Calendar error: {e}"
+        }
 
 
 # =========================================================
-# TASK NODE
+# ADD TASK NODE
 # =========================================================
 
-def task_node(state):
+def task_node(state: AgentState):
 
-    print(
-        "Task tool selected."
-    )
+    command = state.get("command", "").strip()
 
-    task = extract_task_locally(
-        state["command"]
-    )
+    task = command
 
-    tools.add_task(
-        task
-    )
+    if use_ai():
 
-    print(
-        "\nTask Added!"
-    )
+        try:
 
-    print(
-        "Task:",
-        task
-    )
+            task_response = client.responses.create(
+
+                model="gpt-5.6-luna",
+
+                input=f"""
+Extract only the task from this request:
+
+{command}
+
+Return only the task text.
+"""
+            )
+
+            task = task_response.output_text.strip()
+
+        except Exception as e:
+
+            print("Task AI extraction failed:", e)
+
+    tools.add_task(task)
+
+    print("\nTask Added!")
+    print("Task:", task)
 
     return {
-        "result":
-            f"Task Added: {task}"
+        "result": f"Task Added: {task}"
     }
 
 
 # =========================================================
-# SHOW TASK
+# SHOW TASK NODE
 # =========================================================
 
-def show_task_node(state):
-
-    print(
-        "Show Task tool selected."
-    )
+def show_task_node(state: AgentState):
 
     tasks = tools.get_tasks()
 
-    if not tasks:
+    print("\nYour Tasks:")
 
-        return {
-            "result":
-                "No tasks found."
-        }
+    if tasks:
 
-    output = [
-        "Your Tasks:"
-    ]
+        for task in tasks:
+            print(task)
 
-    for task in tasks:
+    else:
 
-        output.append(
-            f"{task[0]}. {task[1]}"
-        )
+        print("No tasks found.")
 
     return {
-        "result":
-            "\n".join(output)
+        "result": str(tasks)
     }
 
 
 # =========================================================
-# SHOW MEETINGS
+# SHOW MEETING NODE
 # =========================================================
 
-def show_meeting_node(state):
-
-    print(
-        "Show Meeting tool selected."
-    )
+def show_meeting_node(state: AgentState):
 
     meetings = tools.get_meetings()
 
-    if not meetings:
+    print("\nYour Meetings:")
 
-        return {
-            "result":
-                "No meetings found."
-        }
+    if meetings:
 
-    output = [
-        "Your Meetings:"
-    ]
+        for meeting in meetings:
+            print(meeting)
 
-    for meeting in meetings:
+    else:
 
-        output.append(
-            f"{meeting[0]}. "
-            f"{meeting[1]} | "
-            f"{meeting[2]} | "
-            f"{meeting[3]}"
-        )
+        print("No meetings found.")
 
     return {
-        "result":
-            "\n".join(output)
+        "result": str(meetings)
     }
 
 
@@ -591,98 +458,112 @@ def show_meeting_node(state):
 # MEMORY NODE
 # =========================================================
 
-def memory_node(state):
+def memory_node(state: AgentState):
 
-    print(
-        "Memory tool selected."
-    )
+    command = state.get("command", "").strip()
 
-    command = state["command"]
+    memory_action = ""
 
-    text = command.lower()
+    if use_ai():
 
-    retrieve_phrases = [
+        try:
 
-        "do you remember",
-        "what do you remember",
-        "what did i tell you",
-        "what did i say",
-        "show my memory",
-        "show memories",
-        "my memories",
-        "retrieve memory",
-        "retrieve memories",
-        "recall"
-    ]
+            memory_type = client.responses.create(
 
-    is_retrieve = any(
-        phrase in text
-        for phrase in retrieve_phrases
-    )
+                model="gpt-5.6-luna",
 
-    if is_retrieve:
+                input=f"""
+Determine whether the user wants to SAVE or RETRIEVE memory.
 
-        memories = tools.get_memories()
+User request:
+{command}
 
-        if not memories:
+Return exactly one:
 
-            return {
-                "result":
-                    "No memories found."
-            }
-
-        output = [
-            "NEXORA Memory:"
-        ]
-
-        for memory in memories:
-
-            output.append(
-                f"• {memory}"
+SAVE
+RETRIEVE
+"""
             )
 
+            memory_action = (
+                memory_type.output_text
+                .strip()
+                .upper()
+            )
+
+        except Exception as e:
+
+            print("Memory AI classification failed:", e)
+
+    # Local fallback
+    if memory_action not in ["SAVE", "RETRIEVE"]:
+
+        text = command.lower()
+
+        if any(word in text for word in [
+            "remember",
+            "save this memory"
+        ]):
+
+            memory_action = "SAVE"
+
+        else:
+
+            memory_action = "RETRIEVE"
+
+    # -----------------------------------------
+    # SAVE
+    # -----------------------------------------
+
+    if memory_action == "SAVE":
+
+        information = command
+
+        if use_ai():
+
+            try:
+
+                memory_response = client.responses.create(
+
+                    model="gpt-5.6-luna",
+
+                    input=f"""
+Extract the important information the user wants NEXORA
+to remember.
+
+User request:
+{command}
+
+Return only the information to remember.
+"""
+                )
+
+                information = memory_response.output_text.strip()
+
+            except Exception as e:
+
+                print("Memory extraction failed:", e)
+
+        tools.save_memory(information)
+
         return {
-            "result":
-                "\n".join(output)
+            "result": f"Memory saved: {information}"
         }
 
-    information = command
+    # -----------------------------------------
+    # RETRIEVE
+    # -----------------------------------------
 
-    remove_phrases = [
+    memories = tools.get_memories()
 
-        "remember this",
-        "remember that",
-        "remember:",
-        "save this",
-        "save that",
-        "store this",
-        "store that"
-    ]
-
-    for phrase in remove_phrases:
-
-        if text.startswith(phrase):
-
-            information = command[
-                len(phrase):
-            ].strip()
-
-            break
-
-    if not information:
+    if memories:
 
         return {
-            "result":
-                "Nothing to remember."
+            "result": str(memories)
         }
-
-    tools.save_memory(
-        information
-    )
 
     return {
-        "result":
-            f"Memory saved: {information}"
+        "result": "No memories found."
     }
 
 
@@ -690,189 +571,203 @@ def memory_node(state):
 # RAG NODE
 # =========================================================
 
-def rag_node(state):
+def rag_node(state: AgentState):
 
-    print(
-        "RAG / Document tool selected."
-    )
+    command = state.get("command", "").strip()
 
-    command = state["command"]
+    try:
 
-    file_path = state.get(
-        "file_path"
-    )
+        relevant_text = tools.search_document(command)
 
-    if not file_path:
+    except Exception as e:
+
+        print("Document search error:", e)
 
         return {
-            "result":
-                "Please upload a PDF, DOCX or TXT file first."
+            "result": f"Document search error: {e}"
         }
 
-    if not os.path.exists(
-        file_path
-    ):
+    if not relevant_text:
 
         return {
-            "result":
-                "Uploaded document was not found."
+            "result": "No relevant information found."
+        }
+
+    if not use_ai():
+
+        return {
+            "result": relevant_text
         }
 
     try:
 
-        result = tools.ask_document(
-            command,
-            file_path
+        response = client.responses.create(
+
+            model="gpt-5.6-luna",
+
+            input=f"""
+You are NEXORA.
+
+Answer the user's question using the document content below.
+
+DOCUMENT CONTENT:
+{relevant_text}
+
+USER QUESTION:
+{command}
+
+Give a clear and direct answer.
+"""
         )
 
+        answer = response.output_text.strip()
+
         return {
-            "result": result
+            "result": answer
         }
 
     except Exception as e:
 
-        print(
-            "RAG error:",
-            e
-        )
+        print("RAG AI error:", e)
 
         return {
-            "result":
-                "Unable to analyze the uploaded document."
+            "result": relevant_text
         }
-
-
-# =========================================================
-# EMAIL EXTRACTION
-# =========================================================
-
-def extract_email_locally(command):
-
-    match = re.search(
-        r"[\w\.-]+@[\w\.-]+\.\w+",
-        command
-    )
-
-    if match:
-        recipient = match.group(0)
-    else:
-        recipient = ""
-
-    message = command
-
-    patterns = [
-
-        r"send an email to\s+[\w\.-]+@[\w\.-]+\.\w+",
-
-        r"send email to\s+[\w\.-]+@[\w\.-]+\.\w+",
-
-        r"send a mail to\s+[\w\.-]+@[\w\.-]+\.\w+",
-
-        r"send mail to\s+[\w\.-]+@[\w\.-]+\.\w+"
-    ]
-
-    for pattern in patterns:
-
-        message = re.sub(
-            pattern,
-            "",
-            message,
-            flags=re.IGNORECASE
-        )
-
-    message = re.sub(
-        r"^(saying|message|that)\s*",
-        "",
-        message,
-        flags=re.IGNORECASE
-    )
-
-    message = message.strip()
-
-    if not message:
-
-        message = "Hello from NEXORA."
-
-    return (
-        recipient,
-        message
-    )
 
 
 # =========================================================
 # EMAIL NODE
 # =========================================================
 
-def email_node(state):
+def email_node(state: AgentState):
 
-    print(
-        "Email tool selected."
-    )
+    command = state.get("command", "").strip()
 
-    command = state["command"]
+    recipient = ""
+    message = ""
 
-    file_path = state.get(
-        "file_path"
-    )
+    # -----------------------------------------
+    # AI extraction
+    # -----------------------------------------
 
-    recipient, message = (
-        extract_email_locally(command)
-    )
+    if use_ai():
+
+        try:
+
+            details = client.responses.create(
+
+                model="gpt-5.6-luna",
+
+                input=f"""
+Extract the email details from this request:
+
+{command}
+
+Return exactly:
+
+RECIPIENT: email address
+MESSAGE: message text
+"""
+            )
+
+            lines = details.output_text.strip().splitlines()
+
+            for line in lines:
+
+                upper_line = line.upper()
+
+                if upper_line.startswith("RECIPIENT:"):
+
+                    recipient = (
+                        line.split(":", 1)[1]
+                        .strip()
+                    )
+
+                elif upper_line.startswith("MESSAGE:"):
+
+                    message = (
+                        line.split(":", 1)[1]
+                        .strip()
+                    )
+
+        except Exception as e:
+
+            print("Email AI extraction failed:", e)
+
+    # -----------------------------------------
+    # Local fallback extraction
+    # -----------------------------------------
+
+    if not recipient:
+
+        parts = command.split()
+
+        for part in parts:
+
+            if "@" in part and "." in part:
+
+                recipient = (
+                    part
+                    .strip(".,!?")
+                )
+
+                break
+
+    if not message:
+
+        lower_command = command.lower()
+
+        if "saying" in lower_command:
+
+            message = command.split(
+                "saying",
+                1
+            )[1].strip()
+
+        elif "saying" in command:
+
+            message = command.split(
+                "Saying",
+                1
+            )[1].strip()
+
+        else:
+
+            message = "Hello from NEXORA."
+
+    # -----------------------------------------
+    # Validation
+    # -----------------------------------------
 
     if not recipient:
 
         return {
-            "result":
-                "Please provide a valid email address."
+            "result": "Email address is missing."
         }
 
-    print(
-        "\nEmail Details:"
-    )
+    if "@" not in recipient or "." not in recipient:
 
-    print(
-        "Recipient:",
-        recipient
-    )
+        return {
+            "result": "Invalid email address."
+        }
 
-    print(
-        "Message:",
-        message
-    )
+    if not message:
 
-    # Attachment
-    if (
-        file_path
-        and os.path.exists(file_path)
-    ):
+        return {
+            "result": "Email message is missing."
+        }
 
-        print(
-            "Attachment:",
-            os.path.basename(file_path)
-        )
+    print("\nEmail Details:")
+    print("Recipient:", recipient)
+    print("Message:", message)
 
-        permission_text = (
-            f"Send an email to {recipient} "
-            f"with attachment "
-            f"{os.path.basename(file_path)}"
-        )
+    # -----------------------------------------
+    # Permission
+    # -----------------------------------------
 
-    else:
-
-        file_path = None
-
-        permission_text = (
-            f"Send an email to {recipient}"
-        )
-
-    # IMPORTANT:
-    # Browser Allow sends permission_granted=True
     allowed = ask_permission(
-        permission_text,
-        state.get(
-            "permission_granted",
-            False
-        )
+        f"Send an email to {recipient}",
+        state
     )
 
     if not allowed:
@@ -880,30 +775,25 @@ def email_node(state):
         if os.getenv("NEXORA_UI") == "1":
 
             return {
-                "result":
-                    "PERMISSION_REQUIRED"
+                "result": "PERMISSION_REQUIRED"
             }
 
         return {
-            "result":
-                "Email cancelled by user."
+            "result": "Email cancelled by user."
         }
 
-    print(
-        "Permission granted."
-    )
+    print("Permission granted.")
 
     try:
 
         result = tools.send_email(
             recipient,
             message,
-            file_path
+            state.get("file_path"),
+            state.get("google_access_token")
         )
 
-        print(
-            "\n" + result
-        )
+        print("\n" + result)
 
         return {
             "result": result
@@ -911,26 +801,21 @@ def email_node(state):
 
     except Exception as e:
 
-        print(
-            "Email error:",
-            e
-        )
+        print("Email error:", e)
 
         return {
-            "result":
-                f"Email could not be sent: {e}"
+            "result": f"Email could not be sent: {e}"
         }
 
 
 # =========================================================
-# OTHER
+# OTHER NODE
 # =========================================================
 
-def other_node(state):
+def other_node(state: AgentState):
 
     return {
-        "result":
-            "I couldn't identify a matching NEXORA tool."
+        "result": "Unknown request. Please try another command."
     }
 
 
@@ -938,29 +823,29 @@ def other_node(state):
 # ROUTING
 # =========================================================
 
-def route_request(state):
+def route_request(state: AgentState):
 
-    action = state["action"]
+    action = state.get("action", "OTHER")
 
     if action == "MEETING":
         return "meeting"
 
-    if action == "ADD_TASK":
+    elif action == "ADD_TASK":
         return "task"
 
-    if action == "SHOW_TASK":
+    elif action == "SHOW_TASK":
         return "show_task"
 
-    if action == "SHOW_MEETING":
+    elif action == "SHOW_MEETING":
         return "show_meeting"
 
-    if action == "MEMORY":
+    elif action == "MEMORY":
         return "memory"
 
-    if action == "RAG":
+    elif action == "RAG":
         return "rag"
 
-    if action == "SEND_EMAIL":
+    elif action == "SEND_EMAIL":
         return "email"
 
     return "other"
@@ -970,10 +855,7 @@ def route_request(state):
 # LANGGRAPH
 # =========================================================
 
-graph = StateGraph(
-    AgentState
-)
-
+graph = StateGraph(AgentState)
 
 graph.add_node(
     "analyze",
@@ -1091,33 +973,31 @@ app = graph.compile()
 
 
 # =========================================================
-# TERMINAL TEST
+# TEST
 # =========================================================
 
 if __name__ == "__main__":
 
     result = app.invoke({
 
-        "command":
-            "show my tasks",
+        "command": "show my tasks",
 
-        "action":
-            "",
+        "action": "",
 
-        "result":
-            "",
+        "result": "",
 
-        "file_path":
-            "",
+        "file_path": None,
 
-        "permission_granted":
-            False
+        "permission_granted": False,
+
+        "google_access_token": None
     })
 
+    print("\nFinal Result:")
     print(
-        "\nFinal Result:"
+        result.get(
+            "result",
+            "No result."
+        )
     )
 
-    print(
-        result["result"]
-    )
