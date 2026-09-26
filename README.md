@@ -16,8 +16,10 @@ It combines task management, Google Calendar, Gmail, conversation memory, docume
 * 🔐 **Permission Control** — Request user confirmation before sensitive actions.
 * 🔀 **LangGraph Agent** — Route requests through specialized processing nodes.
 * 💻 **Professional Web UI** — Interactive Streamlit interface.
+* 🔐 **Google Login** — Securely sign in to NEXORA using Google authentication.
+* ⚡ **Local Document Analysis** — Analyze uploaded PDF, DOCX, and TXT files without requiring the OpenAI API.
 * 🗄️ **SQLite Database** — Store tasks, meetings, and memories locally.
-* 🛡️ **Local Fallback** — Continue basic request classification when the OpenAI API is unavailable.
+* 🛡️ **Local Fallback** — * Analyze uploaded PDF, DOCX, and TXT files without requiring the OpenAI API.
 
 ---
 
